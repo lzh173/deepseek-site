@@ -1,10 +1,11 @@
 # GOAL.md — Ray：DeepSeek 风格的多渠道聊天服务
 
-> 版本 v1.3 · 2026-11-16 · 状态：**已确认，可开工**
+> 版本 v1.4 · 2026-11-16 · 状态：**已开工**
 >
 > v1.1 变更：① 明确仓库工作流（原 demo 只读参考）；② 付费白名单粒度改为**模型级**；③ `ray` 出现在**所有**错误信息中；④ 补充总体代码结构；⑤ 技术栈微调。
 > v1.2 变更：① 路由与鉴权落到 **Key ⇄ 模型多对多**；② 公开模型不划分档位；③ 外层由 Cloudflare Access 承接；④ 可移植性列为硬要求；⑤ 工具链验证通过、构建脚本跨平台化。
 > v1.3 变更：**白名单最终定为「Key × 模型」，两列均必填**；授权集合是故障转移的硬边界（越界即 403，集合内耗尽即 503）。
+> v1.4 变更（实现阶段）：① 弃用 Drizzle，改**手写 SQL 迁移**（`db/migrations/*.sql` + 极简迁移器，零代码生成）；② 弃用 tsx，服务端直接 `node --experimental-strip-types`（少一层构建，与前端零新增依赖的原则一致）；③ `better-sqlite3` 在本机需 MSVC 从源码编译，Docker 镜像需带 `build-essential`/`python3`。
 >
 > 本文是唯一目标文档。实现以本文为准；与本文冲突的临时想法一律作废。
 
@@ -81,7 +82,7 @@
 | A-02 | 登录 = 用户名 + 密码，HttpOnly Cookie 会话 30 天滚动 | 管理端额外要求 CSRF 双提交 |
 | A-03 | 首个管理员由环境变量 `RAY_ADMIN_USER` / `RAY_ADMIN_PASSWORD` 在首次启动时创建 | 不写死在代码里 |
 | A-04 | 会话以服务端为**唯一真源**，前端 IndexedDB 仅做接口替换，不保留离线写 | 多端一致、删除即真删 |
-| A-05 | 数据库 SQLite（WAL）+ better-sqlite3 + Drizzle | 单机足够，备份简单 |
+| A-05 | 数据库 SQLite（WAL）+ better-sqlite3 + **手写 SQL 迁移** | 单机足够，零代码生成，换机器直接可跑 |
 | A-06 | 文件按 `sha256` 内容寻址落盘，重复上传只存一份 | 节省磁盘，天然去重 |
 | A-07 | 搜索用自建 SearXNG；文档解析用纯 JS 库（不还原版面） | 免费、可控 |
 | A-08 | 语音（ASR/TTS）MVP 直接走浏览器 Web Speech API，BFF 返回 501 | 零成本；后续可换本地 whisper |
@@ -160,7 +161,7 @@ deepseek-lzh/                      # 项目仓库（pnpm workspace）
 │       ├── pool/                  # select / rotation / cooldown / health / quota
 │       ├── caps/                  # title / search / reader / parse / vision / asr / tts / moderation
 │       ├── storage/               # sessions / files(sha256) / grants
-│       ├── db/                    # schema(drizzle) / migrate / seed
+│       ├── db/                    # migrations/*.sql / migrate / seed / types
 │       └── jobs/                  # cleaner（孤儿文件）/ healthcheck
 │
 ├── data/                          # 运行期，gitignore
@@ -657,7 +658,7 @@ title / search / reader / parse / asr / tts / moderation 全部落地。
 
 **后端**
 `fastify 5` · `@fastify/cookie` · `@fastify/multipart` · `@fastify/rate-limit` · `@fastify/helmet` · `@fastify/static`
-`better-sqlite3` · `drizzle-orm` · `zod` · `undici` · `pino` · `@node-rs/argon2`
+`better-sqlite3` · `zod` · `undici` · `pino` · `@node-rs/argon2` · `fastify-plugin`
 `unpdf` · `mammoth` · `@mozilla/readability` · `jsdom`
 
 **旁挂服务**

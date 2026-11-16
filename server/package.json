@@ -5,10 +5,10 @@
   "type": "module",
   "description": "Ray BFF：把 chat-demo 的 DeepSeek 直连协议搬到服务端",
   "scripts": {
-    "dev": "tsx watch src/index.ts",
-    "start": "tsx src/index.ts",
+    "dev": "node --env-file-if-exists=.env --watch --experimental-strip-types src/index.ts",
+    "start": "node --env-file-if-exists=.env --experimental-strip-types src/index.ts",
     "type": "tsc -p tsconfig.json --noEmit",
-    "smoke": "tsx scripts/smoke.ts"
+    "smoke": "node --env-file-if-exists=.env --experimental-strip-types scripts/smoke.ts"
   },
   "dependencies": {
     "@fastify/cookie": "^11.0.0",
@@ -27,7 +27,6 @@
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.0",
     "@types/node": "^22.0.0",
-    "tsx": "^4.19.0",
     "typescript": "7.0.2"
   }
 }

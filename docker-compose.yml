@@ -1,0 +1,41 @@
+# Ray 单机部署
+#
+# 用法：
+#   1) cp server/.env.example server/.env 并按需修改
+#   2) docker compose --env-file server/.env up -d --build
+#
+# 外网入口建议由 Cloudflare Tunnel / Cloudflare Access 承接，
+# 因此这里只把端口绑到 127.0.0.1，不直接暴露到公网。
+
+name: ray
+
+services:
+  ray:
+    build:
+      context: .
+      dockerfile: server/Dockerfile
+    image: ray-bff:latest
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:3000:3000"
+    environment:
+      RAY_HOST: 0.0.0.0
+      RAY_PORT: "3000"
+      RAY_DATA_DIR: /data
+      RAY_LOG_LEVEL: info
+      # 走 Cloudflare 时浏览器侧是 https，Cookie 必须带 Secure
+      RAY_COOKIE_SECURE: "true"
+      # 以下从 --env-file 注入（名字必须显式声明才会进入容器）
+      RAY_MASTER_KEY: ${RAY_MASTER_KEY:-}
+      RAY_ADMIN_USER: ${RAY_ADMIN_USER:-admin}
+      RAY_ADMIN_PASSWORD: ${RAY_ADMIN_PASSWORD:-}
+      RAY_MAX_UPLOAD_MB: ${RAY_MAX_UPLOAD_MB:-64}
+      RAY_USER_DAILY_QUOTA: ${RAY_USER_DAILY_QUOTA:-500}
+      RAY_UPSTREAM_BASE_URL: ${RAY_UPSTREAM_BASE_URL:-}
+      RAY_UPSTREAM_API_KEY: ${RAY_UPSTREAM_API_KEY:-}
+      RAY_UPSTREAM_MODEL: ${RAY_UPSTREAM_MODEL:-}
+    volumes:
+      - ray-data:/data
+
+volumes:
+  ray-data:

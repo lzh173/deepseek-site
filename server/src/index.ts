@@ -3,8 +3,9 @@ import helmet from '@fastify/helmet'
 import multipart from '@fastify/multipart'
 import Fastify, { type FastifyInstance } from 'fastify'
 import { openDb } from './db/index.ts'
-import { seedAdmin } from './db/seed.ts'
+import { seedAdmin, seedUpstream } from './db/seed.ts'
 import { env } from './env.ts'
+import { startJobs } from './jobs/index.ts'
 import { authPlugin } from './plugins/auth.ts'
 import { dbPlugin } from './plugins/db.ts'
 import { errorPlugin } from './plugins/errors.ts'
@@ -20,6 +21,7 @@ import { sessionRoutes } from './routes/sessions.ts'
 export const buildApp = async (): Promise<FastifyInstance> => {
   const db = openDb()
   await seedAdmin(db)
+  seedUpstream(db)
 
   const app = Fastify({
     logger: { level: env.RAY_LOG_LEVEL },
@@ -52,6 +54,8 @@ export const buildApp = async (): Promise<FastifyInstance> => {
     },
     { prefix: '/api' }
   )
+
+  startJobs(app)
 
   return app
 }
