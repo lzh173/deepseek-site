@@ -1,0 +1,17 @@
+# SearXNG 最小配置：只开 html + json，关闭限流（仅内网使用）
+use_default_settings: true
+
+general:
+  instance_name: "ray-search"
+
+server:
+  # 生产部署请改掉；SearXNG 用它给 cookie / 缓存签名
+  secret_key: "ray-change-this-secret-key"
+  limiter: false
+  image_proxy: false
+
+search:
+  safe_search: 1
+  formats:
+    - html
+    - json

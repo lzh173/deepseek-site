@@ -8,19 +8,32 @@
  * - 已经开始输出之后再失败，只能写一帧 error 后关闭，message 里同样带 ray。
  */
 
-import type { FastifyInstance, FastifyReply } from 'fastify'
+import type { FastifyBaseLogger, FastifyInstance, FastifyReply } from 'fastify'
 import { z } from 'zod'
-import { badRequest, serverBusy, unauthorized } from '../lib/errors.ts'
-import { nowIso } from '../lib/time.ts'
+import { readUrl, type ReadResult } from '../caps/reader.ts'
+import { searchWeb, type SearchHit } from '../caps/search.ts'
+import { badRequest, quotaExceeded, serverBusy, unauthorized } from '../lib/errors.ts'
+import { nowIso, todayUtc } from '../lib/time.ts'
 import type { SessionUser } from '../lib/user.ts'
 import { requireUser } from '../plugins/auth.ts'
 import { pickKey, reportKey, type PoolPick } from '../pool/index.ts'
 import type {
   ApiErrorBody,
   CreateMessageRequest,
+  MessageParam,
   MessageStreamEvent,
   MessageUsage,
+  ToolParam,
 } from '../protocol/types.ts'
+import {
+  readToolResult,
+  readToolUse,
+  searchToolResult,
+  searchToolResultError,
+  searchToolUse,
+  toToolBlockEvents,
+  type ToolBlock,
+} from '../protocol/tools.ts'
 import { deriveTitle } from '../protocol/title.ts'
 import {
   newMessageId,
@@ -139,6 +152,257 @@ const endSse = (reply: FastifyReply): void => {
   }
 }
 
+// ---------- 用户日配额 ----------
+
+/**
+ * 用户日配额（GOAL.md §11.1）：当天（UTC）status='ok' 的 usage_log 行数达到上限就拒绝。
+ * dailyQuota = 0 表示不限（管理员默认）；必须在流开始之前抛，前端拿到的才是 429 JSON + ray。
+ */
+const assertDailyQuota = (app: FastifyInstance, user: SessionUser): void => {
+  if (user.dailyQuota <= 0) {
+    return
+  }
+  const dayStart = `${todayUtc()}T00:00:00.000Z`
+  const row = app.db
+    .prepare(
+      `SELECT COUNT(*) AS n FROM usage_log
+       WHERE user_id = ? AND ts >= ? AND status = 'ok'`
+    )
+    .get(user.id, dayStart) as { n: number } | undefined
+  const used = row?.n ?? 0
+  if (used >= user.dailyQuota) {
+    throw quotaExceeded()
+  }
+}
+
+// ---------- 联网工具预处理（GOAL.md §9 #4 / #5） ----------
+
+/** 查询文本上限：搜索词太长对召回没有帮助，只会浪费上游 token */
+const MAX_QUERY_CHARS = 200
+/** 注入 system 的每条摘要上限 */
+const MAX_SNIPPET_CHARS = 200
+/** 注入 system 的每篇正文上限 */
+const MAX_READ_CHARS = 8_000
+/** 单轮最多读几个链接 */
+const MAX_READ_LINKS = 2
+/** 检索结果注入 system 时的固定引导语 */
+const SEARCH_NOTE_HEADER = '以下是检索结果，请据此回答并在句末用 [1][2] 标注来源：'
+/** 读链接正文注入 system 时的固定引导语 */
+const READ_NOTE_HEADER = '以下是用户消息中链接的正文，请结合这些内容回答：'
+
+type PreparedTools = {
+  /** 第一个文本块之前要按顺序下发的工具块 */
+  blocks: ToolBlock[]
+  /** 追加到 system 的检索/正文材料 */
+  notes: string[]
+}
+
+/** 最后一条 user 消息的纯文本：搜索查询与读链接都以它为输入 */
+const lastUserText = (messages: MessageParam[]): string => {
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = messages[index]
+    if (!message || message.role !== 'user') {
+      continue
+    }
+    if (typeof message.content === 'string') {
+      return message.content
+    }
+    return message.content
+      .map((block) => (block.type === 'text' && typeof block.text === 'string' ? block.text : ''))
+      .join('\n')
+  }
+  return ''
+}
+
+/** body.tools 里是否声明了某个服务端工具（前端同时带 type 与 name） */
+const declaredTool = (tools: ToolParam[] | undefined, name: string): boolean =>
+  (tools ?? []).some((tool) => tool.type === name || tool.name === name)
+
+/** 从最后一条用户消息里提取 http(s) 链接；句末标点不算链接的一部分 */
+const extractLinks = (text: string): string[] => {
+  const links: string[] = []
+  for (const matched of text.matchAll(/https?:\/\/[^\s<>"'`\u3000]+/gi)) {
+    const link = (matched[0] ?? '').replace(/[.,;:!?，。；：！？、）)】"'”’]+$/u, '')
+    if (link === '' || links.includes(link)) {
+      continue
+    }
+    links.push(link)
+    if (links.length >= MAX_READ_LINKS) {
+      break
+    }
+  }
+  return links
+}
+
+const formatSearchNote = (hits: SearchHit[]): string => {
+  const lines = hits.map((hit, index) => {
+    const snippet = hit.snippet === '' ? '' : `\n   摘要：${hit.snippet.slice(0, MAX_SNIPPET_CHARS)}`
+    return `[${index + 1}] ${hit.title}\n   URL：${hit.url}${snippet}`
+  })
+  return `${SEARCH_NOTE_HEADER}\n${lines.join('\n')}`
+}
+
+const formatReadNote = (results: ReadResult[]): string => {
+  const blocks = results.map((result) => {
+    const title = result.title ?? result.url
+    return `【${title}】${result.url}\n${result.text.slice(0, MAX_READ_CHARS)}`
+  })
+  return `${READ_NOTE_HEADER}\n\n${blocks.join('\n\n')}`
+}
+
+/**
+ * 联网搜索：先下发调用块（表示「尝试检索过」），再下发结果块；
+ * 有结果时把结果列表注入 system，没有结果时结果块只含一个 error 项，对话照常继续（§9 铁律 3）。
+ */
+const prepareSearch = async (
+  ray: string,
+  rawQuery: string,
+  signal: AbortSignal,
+  log: FastifyBaseLogger
+): Promise<{ blocks: ToolBlock[]; note: string | null }> => {
+  const query = rawQuery.trim().slice(0, MAX_QUERY_CHARS)
+  if (query === '') {
+    // 只发了附件之类：没有可检索的文本，不发工具块
+    log.debug({ ray }, '联网搜索已开启，但最后一条用户消息没有文本')
+    return { blocks: [], note: null }
+  }
+
+  const toolUse = searchToolUse(ray, [query])
+  const hits = await searchWeb([query], signal)
+  if (hits.length === 0) {
+    // 失败路径同样先发调用块：tool_use_id 才不会悬空，前端也能把这次检索标成失败
+    log.info({ ray, query }, '联网搜索没有可用结果，本轮退化为普通对话')
+    return { blocks: [toolUse, searchToolResultError(toolUse.id)], note: null }
+  }
+
+  return {
+    blocks: [toolUse, searchToolResult(toolUse.id, hits)],
+    note: formatSearchNote(hits),
+  }
+}
+
+/** 读链接：成功的链接各发一对「调用块 + 结果块」，正文注入 system；失败的只记日志 */
+const prepareRead = async (
+  ray: string,
+  links: string[],
+  signal: AbortSignal,
+  log: FastifyBaseLogger
+): Promise<{ blocks: ToolBlock[]; note: string | null }> => {
+  if (links.length === 0) {
+    return { blocks: [], note: null }
+  }
+
+  const fetched = await Promise.all(
+    links.map(async (link) => {
+      try {
+        return { link, result: await readUrl(link, signal) }
+      } catch (error) {
+        // 单个链接失败不能拖垮对话：只记日志，跳过这一条
+        log.warn({ ray, url: link, err: error }, '读取链接失败，跳过该链接')
+        return null
+      }
+    })
+  )
+
+  const blocks: ToolBlock[] = []
+  const results: ReadResult[] = []
+  let seq = 0
+  for (const item of fetched) {
+    if (!item) {
+      continue
+    }
+    seq += 1
+    const toolUse = readToolUse(ray, item.link, seq)
+    blocks.push(toolUse, readToolResult(toolUse.id, item.result))
+    results.push(item.result)
+  }
+  if (results.length === 0) {
+    return { blocks: [], note: null }
+  }
+  return { blocks, note: formatReadNote(results) }
+}
+
+/**
+ * 在发起上游请求之前跑完全部联网工具。
+ * 顺序固定：先搜索、后读链接；两类工具并行执行，减少首字延迟。
+ * 任何失败都只降级成普通对话，绝不把异常抛给路由层。
+ */
+const prepareTools = async (input: {
+  ray: string
+  tools: ToolParam[] | undefined
+  messages: MessageParam[]
+  signal: AbortSignal
+  log: FastifyBaseLogger
+}): Promise<PreparedTools> => {
+  const wantSearch = declaredTool(input.tools, 'deepseek_web_search')
+  const wantRead = declaredTool(input.tools, 'deepseek_read_url')
+  if (!wantSearch && !wantRead) {
+    return { blocks: [], notes: [] }
+  }
+
+  const text = lastUserText(input.messages)
+  try {
+    const [search, read] = await Promise.all([
+      wantSearch ? prepareSearch(input.ray, text, input.signal, input.log) : Promise.resolve(null),
+      wantRead
+        ? prepareRead(input.ray, extractLinks(text), input.signal, input.log)
+        : Promise.resolve(null),
+    ])
+
+    const blocks: ToolBlock[] = []
+    const notes: string[] = []
+    if (search) {
+      blocks.push(...search.blocks)
+      if (search.note !== null) {
+        notes.push(search.note)
+      }
+    }
+    if (read) {
+      blocks.push(...read.blocks)
+      if (read.note !== null) {
+        notes.push(read.note)
+      }
+    }
+    return { blocks, notes }
+  } catch (error) {
+    input.log.warn({ ray: input.ray, err: error }, '联网工具预处理失败，按普通对话继续')
+    return { blocks: [], notes: [] }
+  }
+}
+
+/** 把工具材料接到 system 末尾；没有 system 就新建一条，保持「system 恒在最前」 */
+const withSystemNotes = (messages: OpenAiMessage[], notes: string[]): OpenAiMessage[] => {
+  if (notes.length === 0) {
+    return messages
+  }
+  const extra = notes.join('\n\n')
+  const first = messages[0]
+  if (first && first.role === 'system') {
+    return [{ role: 'system', content: `${first.content}\n\n${extra}` }, ...messages.slice(1)]
+  }
+  return [{ role: 'system', content: extra }, ...messages]
+}
+
+/**
+ * 工具块占据最前面的若干个块索引，translate 产出的块索引要整体后移，
+ * 保证 start / delta / stop 用的是同一个、且连续的索引。
+ */
+const shiftBlockIndexes = (events: MessageStreamEvent[], offset: number): MessageStreamEvent[] => {
+  if (offset === 0) {
+    return events
+  }
+  return events.map((event) => {
+    switch (event.type) {
+      case 'content_block_start':
+      case 'content_block_delta':
+      case 'content_block_stop':
+        return { ...event, index: event.index + offset }
+      default:
+        return event
+    }
+  })
+}
+
 // ---------- 上游尝试 ----------
 
 type AttemptFailure = {
@@ -176,6 +440,10 @@ type AttemptContext = {
   ray: string
   /** 客户端断开信号 */
   client: AbortSignal
+  /** 第一个文本块之前要下发的工具块事件（索引已从 0 排好） */
+  toolEvents: MessageStreamEvent[]
+  /** 工具块数量：translate 产出的块索引从这里往后排 */
+  blockOffset: number
 }
 
 /** 所有上游失败的对外文案都统一成这一句，细节只进日志（GOAL.md §12.2） */
@@ -271,8 +539,10 @@ const runAttempt = async (ctx: AttemptContext): Promise<AttemptResult> => {
         stopTimer()
         openSse(ctx.reply, ctx.ray)
         writeEvents(ctx.reply, translator.start())
+        // 工具块必须在第一个文本增量之前全部落地（索引 0 起，文本块排在它们之后）
+        writeEvents(ctx.reply, ctx.toolEvents)
       }
-      writeEvents(ctx.reply, translator.push(chunk))
+      writeEvents(ctx.reply, shiftBlockIndexes(translator.push(chunk), ctx.blockOffset))
     }
     stopTimer()
 
@@ -281,7 +551,7 @@ const runAttempt = async (ctx: AttemptContext): Promise<AttemptResult> => {
       throw new UpstreamError(502, '上游没有返回任何流式内容')
     }
 
-    writeEvents(ctx.reply, translator.finish())
+    writeEvents(ctx.reply, shiftBlockIndexes(translator.finish(), ctx.blockOffset))
     endSse(ctx.reply)
     const ms = Date.now() - startedAt
     reportKey(ctx.app, ctx.pick, {
@@ -395,15 +665,17 @@ export const chatRoutes = async (app: FastifyInstance): Promise<void> => {
     }
     const body = parseBody(request.body)
     const ray = request.ray
+    // 日配额在进流之前校验：超限直接 429 JSON + ray（GOAL.md §11.1）
+    assertDailyQuota(app, user)
 
-    const messages = toOpenAiMessages({ system: body.system, messages: body.messages })
-    if (!messages.some((message) => message.role !== 'system')) {
+    const baseMessages = toOpenAiMessages({ system: body.system, messages: body.messages })
+    if (!baseMessages.some((message) => message.role !== 'system')) {
       throw badRequest('请求体不合法：没有可发送的消息')
     }
     // 标题纯本地生成，不产生任何上游调用（GOAL.md §9 #3）
     const title = body.title?.enabled === true ? deriveTitle(body.messages) : undefined
 
-    // 客户端断开 → 中止上游。
+    // 客户端断开 → 中止工具预处理与上游。
     // 注意：request 的 close 在请求体读完时也会触发（Node 16+），不能直接当成断开；
     // 只有「响应还没写完 + 连接确实断了」才算客户端走了。响应侧的 close 是同一判定的兜底。
     const client = new AbortController()
@@ -421,6 +693,19 @@ export const chatRoutes = async (app: FastifyInstance): Promise<void> => {
     reply.raw.on('close', onClientGone)
 
     const startedAt = Date.now()
+    // 联网工具必须在发起上游请求之前跑完：检索/正文要注入 system，
+    // 工具块也要排在第一个文本块之前（GOAL.md §9 #4 / #5）
+    const prepared = await prepareTools({
+      ray,
+      tools: body.tools,
+      messages: body.messages,
+      signal: client.signal,
+      log: request.log,
+    })
+    const messages = withSystemNotes(baseMessages, prepared.notes)
+    const toolEvents = toToolBlockEvents(prepared.blocks)
+    const blockOffset = prepared.blocks.length
+
     let pick: PoolPick | null = null
     let result: AttemptResult | null = null
     let lastDetail: string | null = null
@@ -439,6 +724,8 @@ export const chatRoutes = async (app: FastifyInstance): Promise<void> => {
           title,
           ray,
           client: client.signal,
+          toolEvents,
+          blockOffset,
         })
         if (result.kind !== 'retry') {
           if (result.kind === 'settled' && !result.ok) {

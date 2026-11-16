@@ -25,6 +25,10 @@ const EnvSchema = z.object({
   RAY_UPSTREAM_MODEL: z.string().min(1).optional(),
   /** 可选的静态站点目录；存在时由 BFF 直接托管前端产物（dist） */
   RAY_WEB_DIR: z.string().optional(),
+  /** SearXNG 实例地址，例如 http://127.0.0.1:8080；未配置时联网搜索走兜底抓取 */
+  RAY_SEARXNG_URL: z.string().url().optional(),
+  /** 读链接允许的最大正文字节数 */
+  RAY_READ_MAX_BYTES: z.coerce.number().int().min(1024).default(2_000_000),
 })
 
 export type Env = z.infer<typeof EnvSchema> & {

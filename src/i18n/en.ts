@@ -193,4 +193,16 @@ export const en = {
   latestReminderLanguage: 'English',
   settingsLocaleZhCN: 'Simplified Chinese',
   settingsLocaleEnUS: 'English',
+  visionUnsupportedModel: 'The current model ({model}) cannot read images',
+  visionFallbackDescription:
+    'A model that can read images can describe them as text first, then send that to the current model.',
+  visionSwitchModel: 'Switch to a vision model',
+  visionModelSwitched: 'Switched to {model}',
+  visionNoModelAvailable: 'No vision model is available right now',
+  visionDescribeAction: 'Have a vision model describe it',
+  visionDescribing: 'Describing...',
+  visionTranscriptMarker: '[Image description]',
+  visionTranscriptAttached: 'Description added to the input',
+  visionDescribeFailed: 'Failed to describe the image: {message}',
+  visionDescribeEmpty: 'The vision model returned no content',
 } satisfies Record<keyof typeof zh, string>

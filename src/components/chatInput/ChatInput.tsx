@@ -29,6 +29,7 @@ import { showToast } from '../base/toastState.js'
 import { ACCEPT, useUploads } from '../../services/attachments.js'
 import { DraftAttachments } from './DraftAttachments.js'
 import { useVoiceInput } from './useVoiceInput.js'
+import { VisionFallback } from './VisionFallback.js'
 import { VoiceButton } from './VoiceButton.js'
 import { Spectrum } from './Spectrum.js'
 import { useTranslate } from '../../i18n/index.js'
@@ -36,8 +37,15 @@ import styles from './ChatInput.module.css'
 
 /** 输入框：自适应高度的文本框 + 文件 + 深度思考与智能搜索开关 + 语音输入 + 发送 / 停止 */
 export const ChatInput = memo(function ChatInput({ sessionId }: { sessionId: string | null }) {
-  // 切换目标时释放录音、转写和 DOM 状态；文字与附件由草稿服务保留。
-  return <Input key={sessionId === null ? 'new' : `session:${sessionId}`} sessionId={sessionId} />
+  const key = sessionId === null ? 'new' : `session:${sessionId}`
+  return (
+    <div className={styles.container}>
+      {/* 当前模型看不了草稿里的图片时，在输入框上方给「换模型 / 先转述」两条出路 */}
+      <VisionFallback key={key} sessionId={sessionId} />
+      {/* 切换目标时释放录音、转写和 DOM 状态；文字与附件由草稿服务保留。 */}
+      <Input key={key} sessionId={sessionId} />
+    </div>
+  )
 })
 
 const Input = ({ sessionId }: { sessionId: string | null }) => {

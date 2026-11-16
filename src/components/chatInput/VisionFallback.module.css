@@ -1,0 +1,42 @@
+/* 多模态降级提示条：挂在输入框上方，颜色全部走 theme.css 令牌，暗色自动跟随 */
+
+.banner {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  box-sizing: border-box;
+  width: 100%;
+  margin-bottom: 8px;
+  padding: 10px 12px;
+  border: 1px solid var(--dsw-alias-button-ghost-active-border);
+  border-radius: 16px;
+  background-color: var(--dsw-alias-button-ghost-active-fill);
+  color: var(--dsw-alias-label-primary);
+}
+
+.text {
+  flex: 1 1 220px;
+  min-width: 0;
+}
+
+.title {
+  font-size: 13px;
+  line-height: 20px;
+  font-weight: 500;
+}
+
+.description {
+  margin-top: 2px;
+  font-size: 12px;
+  line-height: 18px;
+  color: var(--dsw-alias-label-secondary);
+}
+
+.actions {
+  display: flex;
+  flex-shrink: 0;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-left: auto;
+}

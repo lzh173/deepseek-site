@@ -34,8 +34,21 @@ services:
       RAY_UPSTREAM_BASE_URL: ${RAY_UPSTREAM_BASE_URL:-}
       RAY_UPSTREAM_API_KEY: ${RAY_UPSTREAM_API_KEY:-}
       RAY_UPSTREAM_MODEL: ${RAY_UPSTREAM_MODEL:-}
+      # 联网搜索走同 compose 内的 SearXNG（未部署时 BFF 会退化为抓取）
+      RAY_SEARXNG_URL: ${RAY_SEARXNG_URL:-http://searxng:8080}
     volumes:
       - ray-data:/data
+    depends_on:
+      - searxng
+
+  # 自建搜索：只在内网可达，不对外暴露端口
+  searxng:
+    image: searxng/searxng:latest
+    restart: unless-stopped
+    volumes:
+      - ./deploy/searxng/settings.yml:/etc/searxng/settings.yml:ro
+    expose:
+      - "8080"
 
 volumes:
   ray-data:

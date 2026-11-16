@@ -2,6 +2,7 @@ import cookie from '@fastify/cookie'
 import helmet from '@fastify/helmet'
 import multipart from '@fastify/multipart'
 import fastifyStatic from '@fastify/static'
+import rateLimit from '@fastify/rate-limit'
 import Fastify, { type FastifyInstance } from 'fastify'
 import fs from 'node:fs'
 import path from 'node:path'
@@ -20,6 +21,7 @@ import { fileRoutes } from './routes/files.ts'
 import { healthRoutes } from './routes/health.ts'
 import { modelRoutes } from './routes/models.ts'
 import { sessionRoutes } from './routes/sessions.ts'
+import { visionRoutes } from './routes/vision.ts'
 
 export const buildApp = async (): Promise<FastifyInstance> => {
   const db = openDb()
@@ -62,12 +64,20 @@ export const buildApp = async (): Promise<FastifyInstance> => {
 
   await app.register(
     async (api) => {
+      // 只对 /api 限流，静态资源（一个页面几十个 chunk）不受影响
+      await api.register(rateLimit, {
+        max: 300,
+        timeWindow: '1 minute',
+        keyGenerator: (request) => request.ip,
+      })
+
       await api.register(healthRoutes)
       await api.register(authRoutes)
       await api.register(modelRoutes)
       await api.register(chatRoutes)
       await api.register(fileRoutes)
       await api.register(sessionRoutes)
+      await api.register(visionRoutes)
       await api.register(adminRoutes, { prefix: '/admin' })
     },
     { prefix: '/api' }

@@ -22,6 +22,17 @@ const typeForStatus = (status: number): ErrorType => {
   return 'invalid_request'
 }
 
+/** 把框架自带的英文错误文案换成面向用户的中文；其余保持原样。 */
+const localizeMessage = (status: number, message: string): string => {
+  if (status === 429 && /rate limit exceeded/i.test(message)) {
+    return '请求过于频繁，请稍后再试'
+  }
+  if (status === 413 && /request body is too large/i.test(message)) {
+    return '请求体过大'
+  }
+  return message
+}
+
 export const errorPlugin = fp((app: FastifyInstance, _opts: unknown, done: () => void) => {
   app.setErrorHandler((error, request, reply) => {
     const ray = request.ray || newRay()
@@ -53,7 +64,10 @@ export const errorPlugin = fp((app: FastifyInstance, _opts: unknown, done: () =>
       ray,
       error: {
         type: typeForStatus(status),
-        message: withRay(status >= 500 ? '服务器内部错误' : rawMessage, ray),
+        message: withRay(
+          status >= 500 ? '服务器内部错误' : localizeMessage(status, rawMessage),
+          ray
+        ),
       },
     })
   })
