@@ -242,7 +242,9 @@ export const Logs = () => {
       render: (row) => (
         <div className={styles.modelCell}>
           <span className={ui.ellipsis}>
-            {row.channel_id ? (channelName.get(row.channel_id) ?? row.channel_id) : copy.common.none}
+            {row.channel_id
+              ? (channelName.get(row.channel_id) ?? row.channel_id)
+              : copy.common.none}
           </span>
           {row.key_id ? (
             <span className={ui.caption} title={row.key_id}>
@@ -272,9 +274,7 @@ export const Logs = () => {
       key: 'status',
       title: copy.logs.columns.status,
       width: '80px',
-      render: (row) => (
-        <Tag tone={statusTone(row.status)}>{row.status ?? copy.common.none}</Tag>
-      ),
+      render: (row) => <Tag tone={statusTone(row.status)}>{row.status ?? copy.common.none}</Tag>,
     },
   ]
 

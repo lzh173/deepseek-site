@@ -38,7 +38,7 @@
   text-align: left;
   white-space: nowrap;
   color: var(--dsw-alias-label-tertiary);
-  background-color: var(--dsw-alias-bg-layer-3);
+  background-color: var(--dsw-alias-interactive-bg-hover);
 }
 
 .cell {
@@ -95,7 +95,7 @@
 .expandedCell {
   padding: 12px 18px 16px;
   border-bottom: 1px solid var(--dsw-alias-border-l1);
-  background-color: var(--dsw-alias-bg-layer-3);
+  background-color: var(--dsw-alias-interactive-bg-active);
 }
 
 .stateCell {

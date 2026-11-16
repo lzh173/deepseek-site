@@ -2,7 +2,7 @@
   box-sizing: border-box;
   min-width: 0;
   padding: 16px 18px;
-  border: 1px solid var(--dsw-alias-border-l1);
+  border: 1px solid var(--dsw-alias-border-l2);
   border-radius: 12px;
   background-color: var(--dsw-alias-bg-layer-2);
 }

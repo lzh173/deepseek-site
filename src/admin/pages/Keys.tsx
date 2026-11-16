@@ -56,9 +56,7 @@ const UsageCell = ({ item }: { item: KeyItem }) => {
           style={{ width: `${Math.min(100, ratio * 100)}%` }}
         />
       </div>
-      <span className={ui.mono}>
-        {copy.keys.usage(item.used_today, item.daily_quota)}
-      </span>
+      <span className={ui.mono}>{copy.keys.usage(item.used_today, item.daily_quota)}</span>
     </div>
   )
 }
@@ -235,9 +233,7 @@ export const Keys = () => {
         <div className={styles.secretCell}>
           <span className={ui.mono}>{row.secret_masked}</span>
           <span className={ui.caption}>
-            {row.models.length > 0
-              ? copy.keys.modelsCount(row.models.length)
-              : copy.keys.noModels}
+            {row.models.length > 0 ? copy.keys.modelsCount(row.models.length) : copy.keys.noModels}
           </span>
         </div>
       ),
@@ -483,9 +479,7 @@ const KeyModelsEditor = ({
   }
 
   const save = async () => {
-    const invalid = rows.some(
-      (row) => !row.public_model || row.upstream_model.trim().length === 0
-    )
+    const invalid = rows.some((row) => !row.public_model || row.upstream_model.trim().length === 0)
     if (invalid) {
       showToast(copy.keys.modelsInvalid)
       return
@@ -539,7 +533,10 @@ const KeyModelsEditor = ({
       ) : (
         <div className={styles.modelRows}>
           {rows.map((row, index) => (
-            <div key={`${row.public_model}-${row.upstream_model}-${index}`} className={styles.modelRow}>
+            <div
+              key={`${row.public_model}-${row.upstream_model}-${index}`}
+              className={styles.modelRow}
+            >
               <Select
                 ariaLabel={copy.keys.publicModel}
                 value={row.public_model}
@@ -551,7 +548,9 @@ const KeyModelsEditor = ({
                 value={row.upstream_model}
                 placeholder={copy.keys.upstream}
                 spellCheck={false}
-                onChange={(event) => updateRow(index, { upstream_model: event.currentTarget.value })}
+                onChange={(event) =>
+                  updateRow(index, { upstream_model: event.currentTarget.value })
+                }
               />
               <Input
                 value={String(row.weight)}

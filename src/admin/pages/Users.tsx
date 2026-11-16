@@ -450,7 +450,9 @@ export const Users = () => {
                           onClick={() =>
                             setAllOfModel(
                               selectedModel.id,
-                              keyGroups.filter((group) => group.enabled).map((group) => group.key_id),
+                              keyGroups
+                                .filter((group) => group.enabled)
+                                .map((group) => group.key_id),
                               true
                             )
                           }
@@ -551,9 +553,7 @@ export const Users = () => {
                               <IconButton
                                 icon={<IconTrashOutline16 />}
                                 tooltip={copy.users.orphanRemove}
-                                onClick={() =>
-                                  toggleGrant(selectedModel.id, grant.key_id, false)
-                                }
+                                onClick={() => toggleGrant(selectedModel.id, grant.key_id, false)}
                               />
                             </li>
                           ))}

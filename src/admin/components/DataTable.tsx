@@ -96,7 +96,8 @@ export const DataTable = <T,>({
               ))
             : rows.map((row) => {
                 const key = rowKey(row)
-                const expanded = expandedKey !== null && expandedKey === key && Boolean(renderExpanded)
+                const expanded =
+                  expandedKey !== null && expandedKey === key && Boolean(renderExpanded)
                 return (
                   <Fragment key={key}>
                     <tr

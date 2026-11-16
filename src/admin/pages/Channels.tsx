@@ -107,9 +107,7 @@ const ProbeCell = ({ probe, testing }: { probe?: ProbeResult; testing: boolean }
     return <span className={ui.muted}>{copy.common.none}</span>
   }
   if (probe.ok) {
-    return (
-      <Tag tone="success">{copy.channels.probeOk(probe.latency_ms, probe.status ?? 0)}</Tag>
-    )
+    return <Tag tone="success">{copy.channels.probeOk(probe.latency_ms, probe.status ?? 0)}</Tag>
   }
   return (
     <Tag tone="danger" className={styles.probeTag} title={probe.error ?? ''}>
@@ -250,9 +248,7 @@ export const Channels = () => {
       key: 'probe',
       title: copy.channels.columns.probe,
       width: '170px',
-      render: (row) => (
-        <ProbeCell probe={probes[row.id]} testing={testingId === row.id} />
-      ),
+      render: (row) => <ProbeCell probe={probes[row.id]} testing={testingId === row.id} />,
     },
     {
       key: 'actions',
@@ -462,7 +458,11 @@ const ChannelForm = ({
             onChange={(event) => update('priority', event.currentTarget.value)}
           />
         </Field>
-        <Field label={copy.channels.timeout} hint={copy.channels.timeoutHint} error={errors.timeout}>
+        <Field
+          label={copy.channels.timeout}
+          hint={copy.channels.timeoutHint}
+          error={errors.timeout}
+        >
           <Input
             value={draft.timeout}
             inputMode="numeric"

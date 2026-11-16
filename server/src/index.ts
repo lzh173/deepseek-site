@@ -35,6 +35,21 @@ export const buildApp = async (): Promise<FastifyInstance> => {
   await app.register(helmet, { contentSecurityPolicy: false })
   await app.register(cookie)
 
+  // 容忍「声明了 application/json 但 body 为空」的请求（如 POST /keys/:id/reset）：
+  // Fastify 默认会直接 400，很多前端封装会顺手带上这个头。
+  app.addContentTypeParser('application/json', { parseAs: 'string' }, (_req, body, done) => {
+    const text = typeof body === 'string' ? body.trim() : ''
+    if (!text) {
+      done(null, {})
+      return
+    }
+    try {
+      done(null, JSON.parse(text))
+    } catch (error) {
+      done(error as Error, undefined)
+    }
+  })
+
   await app.register(dbPlugin, { db })
   await app.register(requestIdPlugin)
   await app.register(errorPlugin)

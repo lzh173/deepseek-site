@@ -39,31 +39,31 @@ type DashboardData = {
 const errorColumns: DataTableColumn<LogItem>[] = [
   {
     key: 'time',
-    title: '时间',
+    title: copy.dashboard.columns.time,
     width: '136px',
     render: (row) => <span className={ui.mono}>{formatDateTime(row.ts)}</span>,
   },
   {
     key: 'ray',
-    title: 'ray',
+    title: copy.dashboard.columns.ray,
     width: '184px',
     render: (row) => <span className={ui.code}>{row.ray}</span>,
   },
   {
     key: 'model',
-    title: '模型',
+    title: copy.dashboard.columns.model,
     width: '120px',
     render: (row) => <span className={ui.ellipsis}>{row.public_model ?? copy.common.none}</span>,
   },
   {
     key: 'status',
-    title: '状态',
+    title: copy.dashboard.columns.status,
     width: '72px',
     render: (row) => <Tag tone="danger">{row.status ?? copy.common.none}</Tag>,
   },
   {
     key: 'err',
-    title: '错误',
+    title: copy.dashboard.columns.error,
     render: (row) => (
       <span className={ui.ellipsis} title={row.err ?? ''}>
         {row.err ?? copy.common.none}
@@ -262,7 +262,10 @@ export const Dashboard = () => {
           />
         </Card>
 
-        <Card title={copy.dashboard.channelStatus} description={copy.dashboard.channelStatusDescription}>
+        <Card
+          title={copy.dashboard.channelStatus}
+          description={copy.dashboard.channelStatusDescription}
+        >
           {channels.length === 0 ? (
             <div className={ui.caption}>{loading ? copy.common.loading : copy.common.empty}</div>
           ) : (
@@ -272,11 +275,7 @@ export const Dashboard = () => {
                   <span
                     className={ui.dot}
                     data-tone={
-                      !channel.enabled
-                        ? undefined
-                        : channel.key_count > 0
-                          ? 'success'
-                          : 'warning'
+                      !channel.enabled ? undefined : channel.key_count > 0 ? 'success' : 'warning'
                     }
                   />
                   <span className={styles.channelName} title={channel.name}>

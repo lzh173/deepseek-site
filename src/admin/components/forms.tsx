@@ -67,13 +67,7 @@ export const Switch = ({
 )
 
 /** 两列网格表单；列数为 1 时用于窄面板 */
-export const FormGrid = ({
-  columns = 2,
-  children,
-}: {
-  columns?: 1 | 2
-  children: ReactNode
-}) => (
+export const FormGrid = ({ columns = 2, children }: { columns?: 1 | 2; children: ReactNode }) => (
   <div className={styles.grid} data-columns={columns}>
     {children}
   </div>

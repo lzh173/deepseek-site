@@ -32,7 +32,11 @@ export const createConfig = ({
   devServer,
 }: ConfigOptions = {}): Configuration => ({
   mode: dev ? 'development' : 'production',
-  entry: './src/main.tsx',
+  // 双入口：聊天主站 + 管理后台，各自独立打包，互不拖慢
+  entry: {
+    main: './src/main.tsx',
+    admin: './src/admin/main.tsx',
+  },
   output: {
     path: path.resolve(root, 'dist'),
     // 运行时按当前脚本地址推导资源路径，file:// 下异步 chunk、字体都按相对位置加载
@@ -80,6 +84,15 @@ export const createConfig = ({
     // 经典 defer 脚本支持 file:// 页面的资源加载
     new rspack.HtmlRspackPlugin({
       template: './src/index.html',
+      filename: 'index.html',
+      chunks: ['main'],
+      scriptLoading: 'defer',
+      meta: { 'application-version': version },
+    }),
+    new rspack.HtmlRspackPlugin({
+      template: './src/admin.html',
+      filename: 'admin.html',
+      chunks: ['admin'],
       scriptLoading: 'defer',
       meta: { 'application-version': version },
     }),

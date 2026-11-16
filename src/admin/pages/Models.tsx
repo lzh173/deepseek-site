@@ -531,7 +531,12 @@ const ModelForm = ({
             ))}
           </div>
         </Field>
-        <Field label={copy.models.fallbackChain} hint={copy.models.fallbackHint} error={errors.fallback} wide>
+        <Field
+          label={copy.models.fallbackChain}
+          hint={copy.models.fallbackHint}
+          error={errors.fallback}
+          wide
+        >
           <Input
             value={draft.fallback}
             spellCheck={false}
