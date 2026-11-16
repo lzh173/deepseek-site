@@ -1,9 +1,10 @@
 # GOAL.md — Ray：DeepSeek 风格的多渠道聊天服务
 
-> 版本 v1.2 · 2026-11-16 · 状态：**已确认，可开工**
+> 版本 v1.3 · 2026-11-16 · 状态：**已确认，可开工**
 >
 > v1.1 变更：① 明确仓库工作流（原 demo 只读参考）；② 付费白名单粒度改为**模型级**；③ `ray` 出现在**所有**错误信息中；④ 补充总体代码结构；⑤ 技术栈微调。
-> v1.2 变更：① 路由与鉴权落到 **Key ⇄ 模型多对多**；② 白名单可收窄到 Key；③ 公开模型不划分档位；④ 外层由 Cloudflare Access 承接；⑤ 可移植性列为硬要求；⑥ 工具链验证通过、构建脚本跨平台化。
+> v1.2 变更：① 路由与鉴权落到 **Key ⇄ 模型多对多**；② 公开模型不划分档位；③ 外层由 Cloudflare Access 承接；④ 可移植性列为硬要求；⑤ 工具链验证通过、构建脚本跨平台化。
+> v1.3 变更：**白名单最终定为「Key × 模型」，两列均必填**；授权集合是故障转移的硬边界（越界即 403，集合内耗尽即 503）。
 >
 > 本文是唯一目标文档。实现以本文为准；与本文冲突的临时想法一律作废。
 
@@ -30,7 +31,7 @@
 1. Fork `chat-demo`，保持 UI 与交互一致，新增登录、模型选择、用量与降级提示。
 2. 自建 BFF（Node + Fastify），实现前端的全部 API 需求。
 3. 渠道管理：付费 / 免费两类，多个渠道，每个渠道下**多个 API Key 组成账号池**（加密存储、轮询、冷却、健康检查）。
-4. 付费渠道严格按角色鉴权；管理员可按用户开白名单（粒度到模型）。
+4. 付费渠道严格按角色鉴权；管理员可按用户开白名单（粒度到 Key × 模型）。
 5. 聊天记录与上传文件**存服务端**，带硬性限额。
 6. 所有原本依赖上游的能力（标题、搜索、读链接、文档解析、多模态、语音、审核）都提供**免费兜底实现**或显式降级。
 7. 管理后台（独立入口，风格与主站一致，支持暗色）。
@@ -63,7 +64,7 @@
 |---|---|
 | D-01 | 界面风格与原 demo **完全一致**，包含亮色 / 暗色两种主题；管理后台沿用同一套设计令牌。 |
 | D-02 | 账号池 = **API Key 池**：每个中转站 / 官方档可配多把 key，加密存储，轮询 + 冷却。**不是**网页端 cookie 池。 |
-| D-03 | 管理员可以给**个别用户**开通付费白名单（粒度到模型，见 §8）。 |
+| D-03 | 管理员可以给**个别用户**开通付费白名单（粒度 = Key × 模型，见 §8）。 |
 | D-04 | **所有免费 key 都失败**时，返回前端"服务器繁忙"+ **请求编号 `ray`**。 |
 | D-05 | 付费渠道默认仅管理员可用；普通用户即使伪造请求也必须被服务端拒绝。 |
 | D-06 | 聊天记录、上传文件存**服务端**，并设上限。 |
@@ -197,6 +198,7 @@ deepseek-lzh/                      # 项目仓库（pnpm workspace）
     "id": "ray-chat",
     "display_name": "Ray Chat",
     "tier": "free",
+    "available": true,
     "context": 32768,
     "caps": {
       "vision": true,
@@ -272,8 +274,8 @@ key_usage(key_id, day, requests, tokens)        -- 复合主键，按天分桶
 models(id, display_name, context, caps_json, tier,
        fallback_chain_json, enabled)
 
--- 付费白名单：模型级，可收窄到指定 Key
-grants(user_id, model_id, key_id NULL, expires_at NULL)
+-- 付费白名单：粒度 =「Key × 模型」，两列均必填
+grants(user_id, model_id, key_id, expires_at NULL)   -- PK(user_id, model_id, key_id)
 auth_sessions(token_hash, user_id, expires_at, created_at)
 user_prefs(user_id, key, value_json)
 
@@ -288,16 +290,17 @@ usage_log(ray, ts, user_id, channel_id, key_id, public_model,
 
 一个 `public_model` 只是一个名字，它背后可以是任意多条 `(key, upstream_model)` 记录；这就是"公开模型不分组、由池子兜底"的实现基础。
 
-```
-
 ### 7.2 选择算法
 
 ```
 输入：public_model P、用户 U
 
-1. 授权判定（见 §8）：free 模型 / admin / 有效 grants(U, P, key?)
-2. 候选 = key_models 中 public_model = P 且 enabled 的记录
-     · grants 若收窄到某把 key，则只保留该 key 的记录
+1. 授权判定（见 §8）：
+     · free 模型 → 全员可用，key 集合 = 该模型下全部可用 key
+     · admin     → 该模型下全部可用 key
+     · 普通用户   → **仅 `grants` 中该 (user, model) 对应的 key 集合**
+     · 无授权     → 403，且模型列表不返回该模型
+2. 候选 = key_models 中 public_model = P 且 enabled，**且 key ∈ 第 1 步的 key 集合**
      · 同一 key 若有多条 upstream_model 指向 P，取 weight 最高的一条，按 key 去重
 3. 过滤 key：
      key.status = 'active'
@@ -310,8 +313,11 @@ usage_log(ray, ts, user_id, channel_id, key_id, public_model,
      429     → cooldown = min(60 × 2^fail_count, 3600)s，优先用 Retry-After
      401/403 → key.status='disabled'，后台红灯告警
      5xx/超时 → cooldown 30s，换下一条
-6. 候选耗尽 → models[P].fallback_chain（另一批 key_models）→ 仍失败 → 503 server_busy
+6. 候选耗尽 → models[P].fallback_chain（仅在同一授权 key 集合内）→ 仍失败 → 503 server_busy
 ```
+
+> 关键：**故障转移不跨越授权边界**。用户只被授权了 K2，K2 挂了就返回 503，不会偷偷换到 K5——否则"授权到 Key"就失去意义。
+
 
 
 **硬约束**：只在**收到第一个正文 token 之前**允许无感换 Key。首 token 超时 8s，超时立即切换。已经向客户端输出过内容后，不再换模型，只结束流并提示中断。
@@ -334,42 +340,42 @@ usage_log(ray, ts, user_id, channel_id, key_id, public_model,
 
 ### 8.1 授权模型
 
-**白名单的授权对象 = 模型，但可收窄到"某把 Key 上的某个模型"。**
+**授权的最小单元 = 「某把 Key 上的某个模型」。`model_id` 与 `key_id` 都是必填。**
 
 ```
-grants(user_id, model_id, key_id NULL, expires_at NULL)
+grants(user_id, model_id, key_id, expires_at NULL)
+PRIMARY KEY (user_id, model_id, key_id)
 ```
 
-| 写法 | 含义 |
+| 概念 | 含义 |
 |---|---|
-| `key_id IS NULL` | 该用户可用 `model_id`，走该模型下任意可用的 Key |
-| `key_id = K` | 该用户**只能**通过 Key K 使用该模型（用于"只给某人开某个渠道的额度"） |
+| 一条 grant | 允许 `user` 通过 `key` 调用 `model` |
+| 同一 user + model 多条 grant | 允许走多把 Key，池子在这几把之间做负载均衡与故障转移 |
+| 没有任何 grant | 该付费模型**不可见、不可用** |
 
-之所以允许收窄到 Key：因为**模型可达性是 Key 级的**（见 §7.1），不同 Key 背后的成本、额度、分组都不同；只授权模型不授权 Key，管理员就无法控制"这个人只能用便宜的那把 Key"。
-
-- 一个模型可同时由多个 (Key × 上游模型) 承载，白名单不感知这种映射，除非显式收窄。
-- 管理端默认按**模型**勾选；需要精细控制时展开到 Key。
+为什么必须落到 Key：**模型可达性是 Key 级的**（见 §7.1）。同一把 Key 在不同分组下能调的模型不同，不同 Key 背后的成本与额度也不同。只在模型层授权，管理员就无法回答"这个人烧的是谁的额度"，也无法在 Key 失效时精确回收权限。
 
 ### 8.2 判定规则
 
-| 场景 | 判定 |
-|---|---|
-| `models.tier = free` | 所有已登录用户可用 |
-| `models.tier = paid` 且 `role = admin` | 可用 |
-| `models.tier = paid` 且存在有效 `grants(user, model)` | 可用 |
-| `models.tier = paid` 且 `grants.key_id` 非空 | 仅走该 Key，其他 Key 对其不可见 |
-| `models.tier = paid` 且无授权 | **不可见（列表不返回）+ 请求 403** |
-| `grants.expires_at` 已过 | 等同无授权，立即生效（缓存 TTL ≤ 30 s） |
+| 场景 | 结果 | 模型列表 |
+|---|---|---|
+| `models.tier = free` | 可用，key 集合 = 该模型全部可用 Key | 显示 |
+| `tier = paid` 且 `role = admin` | 可用，key 集合 = 该模型全部可用 Key | 显示 |
+| `tier = paid` 且普通用户有有效 grant | 可用，**key 集合 = 该用户 grant 中的 Key ∩ 当前可用 Key** | 显示 |
+| `tier = paid` 且普通用户无 grant | **403** | **不显示** |
+| 有 grant，但授权 Key 全部不可用 | **503 `server_busy`**（不是 403） | 显示，标 `available: false` |
+| `grants.expires_at` 已过 | 等同无 grant，TTL ≤ 30 s 内生效 | 不显示 |
 
-- `GET /api/models`：按上述规则过滤，用户看不见就没法误点。
-- `POST /api/chat`：**再校验一次**，只信服务端；伪造请求体命中付费模型 → `403`。
-- 管理端「用户」页：按模型勾选白名单，可填有效期，可展开到 Key。
+- `GET /api/models`：按上表过滤，`available` 依授权 Key 的实时状态计算。
+- `POST /api/chat`：**再校验一次**，只信服务端；伪造请求体命中未授权模型 → `403`。
+- **403 与 503 的语义必须区分**：没权限是不给用；有权限但 Key 全挂是暂时没得用。前端对 503 显示"重试"，对 403 显示"无权限"。
 
 ### 8.3 与渠道的关系
 
-- `channel.tier` 只决定**成本归属与统计口径**，不直接参与鉴权。
-- 模型可达性 = 该模型下所有可用 `(key, upstream_model)` 记录的并集；全部不可用时该模型标 `available: false`，请求返回 `503`。
-- **公开模型不划分档位**：不做 fast/chat/pro 的层级，一个公开模型就是一条池子，档内任意 Key 可互相顶替。
+- `channel.tier` 只决定**成本归属与统计口径**，不直接参与鉴权；鉴权只看 `grants`。
+- 某个用户的模型可达性 = `grants` 授权的 Key 集合 ∩ 该模型在 `key_models` 中的 Key 集合 ∩ 当前可用 Key 集合。
+- **公开模型不划分档位**：不做 fast/chat/pro 的层级，一个公开模型就是一条池子，池内任意 Key 可互相顶替——但**绝不允许跨出授权集合**。
+
 
 
 
@@ -517,7 +523,7 @@ grants(user_id, model_id, key_id NULL, expires_at NULL)
 | 渠道 | 增删改、连通性测试、优先级、超时、并发、启停、付费/免费切换 |
 | 账号池 | 批量导入、掩码显示、状态、权重、今日用量、冷却倒计时、单 Key 测试 |
 | 模型 | 公开名、能力位、context、tier、回退链；**Key ⇄ 上游模型映射矩阵**（哪把 Key 能调哪些模型） |
-| 用户 | 角色、日配额、重置密码、**付费模型白名单（按模型勾选 + 有效期）** |
+| 用户 | 角色、日配额、重置密码、**付费白名单（模型 × Key 勾选 + 有效期）** |
 | 日志 | 按 ray / 用户 / 模型 / 渠道 / 状态筛选 |
 | 系统 | 磁盘用量、孤儿文件清理、备份导出 |
 
@@ -593,7 +599,9 @@ Fastify + 登录 + SQLite + 协议翻译 + 单渠道 + 会话/文件存储。
 - [ ] 一个渠道录入 3 把 Key，禁用其中 2 把后请求仍成功
 - [ ] 把某 Key 的响应改成 429，该 Key 进入冷却且不被打到
 - [ ] 普通用户请求付费模型 → 403；列表里也看不到
-- [ ] 给某用户授权 `ray-pro` 后，只有该模型出现，其他付费模型仍不可见
+- [ ] 授权 `ray-pro × K2` 后，只有该模型出现，其他付费模型仍不可见
+- [ ] 同一模型再授权 K5，请求在 K2/K5 之间轮转，绝不落到未授权的 K7
+- [ ] 把 K2、K5 全部禁用 → 返回 503（不是 403，也不偷偷换 Key）
 - [ ] 授权到期后 30 s 内失效，再请求返回 403
 - [ ] 401/403/429/500/503 任意错误的 message 都含 ray，且该 ray 可在后台日志中查到
 - [ ] 后台 Key 列表只显示掩码
