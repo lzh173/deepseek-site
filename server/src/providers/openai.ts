@@ -5,12 +5,18 @@
  * Key 的选择与回写在 pool/index.ts。本文件不知道 DeepSeek 协议，也不写数据库。
  */
 
+import { env } from '../env.ts'
 import { fetch, type Response } from 'undici'
 import type { PoolPick } from '../pool/index.ts'
 import type { OpenAiChunk, OpenAiMessage } from '../protocol/translate.ts'
 
-/** 首 token 时限：超时即认为这把 Key 不可用，换一把重试（GOAL.md §7.2） */
-export const FIRST_TOKEN_TIMEOUT_MS = 8_000
+/**
+ * 首 token 时限：超时即认为这把 Key 不可用，换一把重试（GOAL.md §7.2）。
+ *
+ * 可配置是因为免费中转站的排队时间差异极大：实测某些中转首字节要 8.8 秒，
+ * 固定 8 秒会把「慢但可用」的上游全部误判成故障。
+ */
+export const firstTokenTimeoutMs = (): number => env.RAY_FIRST_TOKEN_TIMEOUT_MS
 
 /** 错误信息里最多带多少上游正文，避免把整段报错塞进日志与前端 */
 const MAX_DETAIL = 200

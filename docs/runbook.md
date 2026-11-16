@@ -220,6 +220,11 @@ docker compose --env-file server/.env up -d --build
   `SELECT * FROM usage_log WHERE ray = ?`。
 - **「服务器繁忙（请求编号：…）」**：所有可用 Key 都失败/冷却了。看「账号池」的
   状态列，或日志里 `status='busy'` 的记录。
+- **「没有可用 Key（全部冷却或额度耗尽）」**：通常是上游返回了 429（免费中转站常见的
+  `rps/tpm exhausted`）。去「日志」页搜这个 ray，`err` 字段里有上游原文。
+  解决办法：等额度窗口恢复、再加一把 Key、或换一个上游。
+- **「上游首 token 超时」**：中转站排队太久。调大 `RAY_FIRST_TOKEN_TIMEOUT_MS`（默认 15 秒）；
+  免费中转实测有 8.8 秒才吐首字节的，8 秒会把它们全部误判成故障。
 - **上传报「文件过大」/「解析失败」**：限额见 GOAL §11.1，服务端为准。
 - **Cookie 不生效**：`RAY_COOKIE_SECURE=true` 时必须是 HTTPS 访问。
 

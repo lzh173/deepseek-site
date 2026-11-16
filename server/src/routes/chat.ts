@@ -47,7 +47,7 @@ import {
   type ResolvedFile,
 } from '../protocol/translate.ts'
 import {
-  FIRST_TOKEN_TIMEOUT_MS,
+  firstTokenTimeoutMs,
   streamChatCompletion,
   UpstreamError,
 } from '../providers/openai.ts'
@@ -700,6 +700,8 @@ type AttemptContext = {
   toolEvents: MessageStreamEvent[]
   /** 工具块数量：translate 产出的块索引从这里往后排 */
   blockOffset: number
+  /** 只有客户端明确开了深度思考才下发 thinking 块 */
+  emitThinking: boolean
 }
 
 /** 所有上游失败的对外文案都统一成这一句，细节只进日志（GOAL.md §12.2） */
@@ -709,7 +711,7 @@ const UPSTREAM_BUSY = '服务器繁忙，请稍后再试'
 const toFailure = (error: unknown, timedOut: boolean): AttemptFailure => {
   const detail =
     timedOut && !(error instanceof UpstreamError)
-      ? `上游首 token 超时（${FIRST_TOKEN_TIMEOUT_MS} ms）`
+      ? `上游首 token 超时（${firstTokenTimeoutMs()} ms）`
       : error instanceof Error
         ? error.message
         : String(error)
@@ -766,6 +768,7 @@ const runAttempt = async (ctx: AttemptContext): Promise<AttemptResult> => {
     id: newMessageId(),
     model: ctx.model,
     ray: ctx.ray,
+    emitThinking: ctx.emitThinking,
     ...(ctx.title === undefined ? {} : { title: ctx.title }),
   })
 
@@ -774,7 +777,7 @@ const runAttempt = async (ctx: AttemptContext): Promise<AttemptResult> => {
   let timer: ReturnType<typeof setTimeout> | null = setTimeout(() => {
     timedOut = true
     attempt.abort()
-  }, FIRST_TOKEN_TIMEOUT_MS)
+  }, firstTokenTimeoutMs())
 
   const stopTimer = (): void => {
     if (timer !== null) {
@@ -994,7 +997,14 @@ export const chatRoutes = async (app: FastifyInstance): Promise<void> => {
       for (let retry = 0; retry <= MAX_RETRIES; retry += 1) {
         // 每次重试都重新选 Key：上一把失败后已进入冷却，不会被再次选中；
         // 授权边界由 pickKey 保证，故障转移不会越界。
-        pick = await pickKey(app, { publicModel: body.model, user })
+        try {
+          pick = await pickKey(app, { publicModel: body.model, user })
+        } catch (error) {
+          // 选 Key 就失败（全冷却 / 未授权 / 模型停用）：只在还没有上游明细时记录，
+          // 否则会把更重要的上游报错覆盖成「没有可用 Key」。
+          lastDetail ??= error instanceof Error ? error.message : String(error)
+          throw error
+        }
         result = await runAttempt({
           app,
           reply,
@@ -1006,6 +1016,7 @@ export const chatRoutes = async (app: FastifyInstance): Promise<void> => {
           client: client.signal,
           toolEvents,
           blockOffset,
+          emitThinking: body.thinking?.type === 'enabled',
         })
         if (result.kind !== 'retry') {
           if (result.kind === 'settled' && !result.ok) {

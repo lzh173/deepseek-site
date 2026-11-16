@@ -31,6 +31,11 @@ const EnvSchema = z.object({
   RAY_READ_MAX_BYTES: z.coerce.number().int().min(1024).default(2_000_000),
   /** 本地关键词审核清单，英文逗号分隔；为空表示不拦截 */
   RAY_MODERATION_KEYWORDS: z.string().optional(),
+  /**
+   * 首 token 超时（毫秒）。免费中转站排队时间差异很大，默认给 15 秒；
+   * 超时即认为当前 Key 不可用，会换下一把重试。
+   */
+  RAY_FIRST_TOKEN_TIMEOUT_MS: z.coerce.number().int().min(1000).max(300_000).default(15_000),
 })
 
 export type Env = z.infer<typeof EnvSchema> & {

@@ -130,7 +130,7 @@ export const pickKey = async (
 
   const first = candidates[0]
   if (!first) {
-    throw serverBusy()
+    throw serverBusy('没有可用 Key（全部冷却或额度耗尽）')
   }
 
   return {
@@ -175,8 +175,10 @@ export const reportKey = (app: FastifyInstance, pick: PoolPick, outcome: PoolOut
     return
   }
 
+  // 429 多为「每秒请求数」限流，恢复很快，用较短的退避；
+  // 其他失败（5xx / 网络）给 30 秒，避免反复打到坏 Key 上。
   const cooldownSeconds =
-    status === 429 ? Math.min(60 * 2 ** (failCount - 1), 3600) : 30
+    status === 429 ? Math.min(15 * 2 ** (failCount - 1), 300) : 30
 
   app.db
     .prepare(

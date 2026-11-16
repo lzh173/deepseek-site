@@ -234,6 +234,12 @@ export type TranslatorConfig = {
   ray: string
   /** 仅在请求开启标题时提供；给了就随 message_delta 下发 */
   title?: string | undefined
+  /**
+   * 是否把上游的 reasoning 下发成 thinking 块。
+   * 大多数上游即使请求里关掉思考也会继续返回 reasoning_content，
+   * 用户明确关掉深度思考时必须丢弃，否则界面会凭空多出一块「思考过程」。
+   */
+  emitThinking?: boolean | undefined
 }
 
 type OpenBlock = { index: number; kind: 'text' | 'thinking' }
@@ -298,7 +304,9 @@ export class StreamTranslator {
 
     const delta = choice.delta ?? {}
     // 先思考后正文：同一帧里两者都可能出现，各自开自己的块
-    const reasoning = readString(delta.reasoning_content) || readString(delta.reasoning)
+    const reasoning = this.config.emitThinking === false
+      ? ''
+      : readString(delta.reasoning_content) || readString(delta.reasoning)
     if (reasoning !== '') {
       events.push(...this.pushThinking(reasoning))
     }
