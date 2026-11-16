@@ -1,6 +1,9 @@
 # GOAL.md — Ray：DeepSeek 风格的多渠道聊天服务
 
-> 版本 v1.0 · 2026-11-16 · 状态：**已确认，可开工**
+> 版本 v1.1 · 2026-11-16 · 状态：**已确认，可开工**
+>
+> v1.1 变更：① 明确仓库工作流（原 demo 只读参考）；② 付费白名单粒度改为**模型级**；③ `ray` 出现在**所有**错误信息中；④ 补充总体代码结构；⑤ 技术栈微调。
+>
 > 本文是唯一目标文档。实现以本文为准；与本文冲突的临时想法一律作废。
 
 ---
@@ -26,7 +29,7 @@
 1. Fork `chat-demo`，保持 UI 与交互一致，新增登录、模型选择、用量与降级提示。
 2. 自建 BFF（Node + Fastify），实现前端的全部 API 需求。
 3. 渠道管理：付费 / 免费两类，多个渠道，每个渠道下**多个 API Key 组成账号池**（加密存储、轮询、冷却、健康检查）。
-4. 付费渠道严格按角色鉴权；管理员可按用户开白名单。
+4. 付费渠道严格按角色鉴权；管理员可按用户开白名单（粒度到模型）。
 5. 聊天记录与上传文件**存服务端**，带硬性限额。
 6. 所有原本依赖上游的能力（标题、搜索、读链接、文档解析、多模态、语音、审核）都提供**免费兜底实现**或显式降级。
 7. 管理后台（独立入口，风格与主站一致，支持暗色）。
@@ -40,7 +43,18 @@
 - 不做跨区域多活 / 分布式部署（单机 + SQLite 起步）。
 - 不重写 Markdown / KaTeX / Mermaid / 分支 / 导入导出等 UI 能力，全部沿用。
 
+### 2.3 仓库与工作流
+
+| 角色 | 路径 / 远端 | 规则 |
+|---|---|---|
+| **项目仓库** | 本工作区 `E:\CODEX-NOworkspaces\deepseek-lzh`，`origin = git@github.com:lzh173/deepseek-site.git` | 所有开发都在这里，唯一可提交的仓库 |
+| **上游** | `upstream = git@github.com:deepseek-ai/chat-demo.git` | 只 fetch，定期 `git merge upstream/main` 取官方更新 |
+| **只读参考** | `deepseek-site/`（chat-demo 的独立克隆，`5d5dd75`） | **永不修改、永不提交**；已加入 `.gitignore`。用途：`diff -r` 对照官方实现、抄写未经改动的文件 |
+
+当前基线：本仓库 HEAD 已 graft 到官方 `main@5d5dd75`（v0.1.1），历史为"官方两次提交 → 本文档"，可正常快进合并上游。
+
 ---
+
 
 ## 3. 已确认决策（用户拍板，不再讨论）
 
@@ -48,7 +62,7 @@
 |---|---|
 | D-01 | 界面风格与原 demo **完全一致**，包含亮色 / 暗色两种主题；管理后台沿用同一套设计令牌。 |
 | D-02 | 账号池 = **API Key 池**：每个中转站 / 官方档可配多把 key，加密存储，轮询 + 冷却。**不是**网页端 cookie 池。 |
-| D-03 | 管理员可以给**个别用户**开通付费渠道白名单。 |
+| D-03 | 管理员可以给**个别用户**开通付费白名单（粒度到模型，见 §8）。 |
 | D-04 | **所有免费 key 都失败**时，返回前端"服务器繁忙"+ **请求编号 `ray`**。 |
 | D-05 | 付费渠道默认仅管理员可用；普通用户即使伪造请求也必须被服务端拒绝。 |
 | D-06 | 聊天记录、上传文件存**服务端**，并设上限。 |
@@ -99,6 +113,60 @@
 ```
 
 **分层原则**：`routes` 不认识上游协议；`protocol` 不认识渠道；`pool` 不认识 HTTP；`caps` 不认识会话。任何一层都能单独替换。
+
+### 5.2 总体代码结构
+
+```
+deepseek-lzh/                      # 项目仓库（pnpm workspace）
+├── GOAL.md                        # 本文档
+├── pnpm-workspace.yaml            # packages: ["server"]
+├── package.json                   # 前端（沿用 chat-demo 脚本）
+├── rspack.config.ts               # 双入口：chat.html / admin.html
+├── .gitignore                     # 含 deepseek-site/、data/、.env
+│
+├── src/                           # 前端 = fork 的 chat-demo
+│   ├── app/ components/ i18n/ services/ utils/   # 保持原结构
+│   └── admin/                     # ★新增：管理端（复用 base 组件与 theme.css）
+│       ├── main.tsx
+│       ├── AdminApp.tsx
+│       ├── api.ts                 # 管理端 fetch 封装
+│       ├── layout/                # 侧栏 / 顶栏 / 主题切换
+│       ├── pages/                 # dashboard channels keys models grants users logs system
+│       └── **/*.module.css
+│
+├── server/                        # ★新增：BFF
+│   ├── package.json
+│   ├── tsconfig.json
+│   └── src/
+│       ├── index.ts               # 启动、注册插件与路由
+│       ├── env.ts                 # zod 校验的环境变量
+│       ├── plugins/               # db / auth / crypto / rate-limit / request-id / errors
+│       ├── routes/
+│       │   ├── chat.ts            # POST /api/chat（SSE）
+│       │   ├── files.ts           # POST/GET/DELETE /api/files
+│       │   ├── models.ts          # GET /api/models（按角色过滤）
+│       │   ├── me.ts              # 登录 / 登出 / 当前用户
+│       │   ├── speech.ts          # MVP 501
+│       │   └── admin/             # channels / keys / models / grants / users / logs / system
+│       ├── protocol/              # DeepSeek 形状 ⇄ OpenAI 形状
+│       │   ├── events.ts          # 事件状态机
+│       │   ├── deepseek.ts        # 前端契约类型
+│       │   └── openai.ts          # 上游流解析
+│       ├── pool/                  # select / rotation / cooldown / health / quota
+│       ├── caps/                  # title / search / reader / parse / vision / asr / tts / moderation
+│       ├── storage/               # sessions / files(sha256) / grants
+│       ├── db/                    # schema(drizzle) / migrate / seed
+│       └── jobs/                  # cleaner（孤儿文件）/ healthcheck
+│
+├── data/                          # 运行期，gitignore
+│   ├── ray.db
+│   └── files/<sha256>
+├── docs/                          # 设计、运维、API 说明
+└── docker-compose.yml             # bff + caddy + searxng(+ocr)
+```
+
+**依赖边界**：前端只依赖 `src/services/api/*` 里的形状定义；后端只通过 `/api/*` 与前端通信；两端共享的类型放在 `server/src/protocol/deepseek.ts`，前端以 `import type` 引用（构建期擦除，不产生运行时耦合）。
+
 
 ---
 
@@ -199,7 +267,9 @@ key_usage(key_id, day, requests, tokens)        -- 复合主键，按天分桶
 models(id, display_name, context, caps_json, tier,
        fallback_chain_json, enabled)
 
-grants(user_id, channel_id NULL, expires_at NULL)  -- NULL = 全部付费渠道
+grants(user_id, model_id, expires_at NULL)   -- 付费白名单：到模型，NULL 有效期 = 永久
+auth_sessions(token_hash, user_id, expires_at, created_at)
+user_prefs(user_id, key, value_json)
 
 sessions(id, user_id, title, payload, created_at, updated_at)
 files(sha256, size, mime, name, ref_count, created_at)
@@ -243,11 +313,39 @@ usage_log(ray, ts, user_id, channel_id, key_id, model,
 
 ## 8. 分级与白名单
 
-- `channel.tier = paid` 且 `channel.enabled`：仅 `role=admin`，或存在 `grants` 记录且未过期的用户可用。
-- `GET /api/models` 做一次过滤（用户看不见 = 不会误点）。
-- `POST /api/chat` 再做一次校验（防伪造）；命中付费渠道但无权限 → `403`。
-- 白名单粒度：渠道。`channel_id IS NULL` 表示该用户可用全部付费渠道。
-- 管理端「用户」页可增删白名单、查看有效期。
+### 8.1 授权模型
+
+**白名单粒度 = 模型（`models.id`），不是渠道、不是 Key。**
+
+理由：模型是用户唯一能感知的、也是前端唯一会显示的东西；渠道和 Key 是实现细节，会随池子伸缩而变。用户被授权的是"能用 `ray-pro` 这个模型"，至于它背后落在哪个渠道、用哪把 Key，由 `pool` 决定。
+
+```
+grants(user_id, model_id, expires_at)   -- 一条记录 = 该用户可用该模型
+```
+
+一个模型可以同时由多个 (渠道 × Key) 承载，白名单不感知这种映射。
+
+> 关于"到 key 的模型"：若你指的是**精确到某把 Key 上的某个模型**，结构上只需把 `grants.model_id` 换成 `channel_model_id`（即 `channel_models` 行），其余不变，属于后置可加的细化。**当前按模型级实现**，因为对用户和 UI 都更自然。
+
+### 8.2 判定规则
+
+| 场景 | 判定 |
+|---|---|
+| `models.tier = free` | 所有已登录用户可用 |
+| `models.tier = paid` 且 `role = admin` | 可用 |
+| `models.tier = paid` 且存在有效 `grants` 记录 | 可用 |
+| `models.tier = paid` 且无授权 | **不可见（模型列表不返回）+ 请求 403** |
+| `grants.expires_at` 已过 | 等同无授权，立即生效 |
+
+- `GET /api/models`：按上述规则过滤，用户看不见就没法误点。
+- `POST /api/chat`：**再校验一次**，只信服务端；伪造请求体命中付费模型 → `403`。
+- 管理端「用户」页：按**模型**勾选白名单，可填有效期；套用/删除即时生效（权限判定不走缓存，或缓存 TTL ≤ 30s）。
+
+### 8.3 与渠道的关系
+
+- `channel.tier` 只影响**池子的成本归属**（付费渠道消耗真金白银），不直接参与鉴权。
+- 模型的可达性 = 该模型下所有可用渠道的并集；若某付费模型的全部渠道都不可用，则该模型在列表中标记 `available: false`，请求返回 `503`。
+
 
 ---
 
@@ -324,8 +422,11 @@ usage_log(ray, ts, user_id, channel_id, key_id, model,
 ### 12.1 ray 规则
 
 - 每个 HTTP 请求生成一个 `ray`：`ray_` + 12 位十六进制。
-- 响应头 `x-ray-id` 恒返回；错误响应体里也带 `ray` 字段。
+- 响应头 `x-ray-id` **恒返回**（成功与失败都有）。
+- **所有**错误响应体都带 `ray` 字段，且 `error.message` 末尾统一追加 `（请求编号：<ray>）`——不区分状态码，401/403/404/413/429/500/503 一律如此。
+- 流式响应开始后出错时，错误帧同样携带 ray。
 - 写入 `usage_log`，后台可按 ray 精确检索。
+
 
 ### 12.2 错误体
 
@@ -390,7 +491,7 @@ usage_log(ray, ts, user_id, channel_id, key_id, model,
 | 渠道 | 增删改、连通性测试、优先级、超时、并发、启停、付费/免费切换 |
 | 账号池 | 批量导入、掩码显示、状态、权重、今日用量、冷却倒计时、单 Key 测试 |
 | 模型 | 公开名 ↔ 上游名映射、能力位、context、tier、回退链 |
-| 用户 | 角色、日配额、重置密码、**付费白名单（含有效期）** |
+| 用户 | 角色、日配额、重置密码、**付费模型白名单（按模型勾选 + 有效期）** |
 | 日志 | 按 ray / 用户 / 模型 / 渠道 / 状态筛选 |
 | 系统 | 磁盘用量、孤儿文件清理、备份导出 |
 
@@ -437,7 +538,9 @@ Fastify + 登录 + SQLite + 协议翻译 + 单渠道 + 会话/文件存储。
 - [ ] 一个渠道录入 3 把 Key，禁用其中 2 把后请求仍成功
 - [ ] 把某 Key 的响应改成 429，该 Key 进入冷却且不被打到
 - [ ] 普通用户请求付费模型 → 403；列表里也看不到
-- [ ] 白名单用户可正常用付费模型，过期后立即失效
+- [ ] 给某用户授权 `ray-pro` 后，只有该模型出现，其他付费模型仍不可见
+- [ ] 授权到期后 30 s 内失效，再请求返回 403
+- [ ] 401/403/429/500/503 任意错误的 message 都含 ray，且该 ray 可在后台日志中查到
 - [ ] 后台 Key 列表只显示掩码
 
 ### M3 · 免费兜底（8–10 人日）
@@ -484,6 +587,30 @@ title / search / reader / parse / asr / tts / moderation 全部落地。
 
 ---
 
-## 附：外部依赖清单
+## 附 A：外部依赖清单
 
-`react 18.3` · `rspack 2` · `zustand 4` · `typescript 7` · `fastify 5` · `better-sqlite3` · `drizzle-orm` · `zod` · `undici` · `pino` · `unpdf` · `mammoth` · `@mozilla/readability` · `searxng` ·（可选）`rapidocr` · `whisper.cpp`
+**前端**（沿用 chat-demo，不新增运行时依赖）
+`react 18.3` · `rspack 2` · `zustand 4` · `typescript 7` · `idb` · `fflate` · `katex` · `mermaid` · `prismjs`
+
+**后端**
+`fastify 5` · `@fastify/cookie` · `@fastify/multipart` · `@fastify/rate-limit` · `@fastify/helmet` · `@fastify/static`
+`better-sqlite3` · `drizzle-orm` · `zod` · `undici` · `pino` · `@node-rs/argon2`
+`unpdf` · `mammoth` · `@mozilla/readability` · `jsdom`
+
+**旁挂服务**
+`searxng`（搜索）· 可选 `rapidocr`（OCR）· 可选 `whisper.cpp`（ASR）
+
+### 技术栈 v1.1 调整点
+
+| 项 | 调整 | 原因 |
+|---|---|---|
+| 密码哈希 | 明确用 `@node-rs/argon2`（默认参数） | 比 bcrypt 更现代，内存硬 |
+| 会话 | **不用 JWT**，改为 `auth_sessions` 表存 token 哈希 | 可即时吊销、可看登录设备 |
+| 鉴权粒度 | `grants` 到 `model_id` | 见 §8 |
+| 包管理 | pnpm workspace，`server/` 为子包 | 一条 `pnpm install` 装完两端 |
+| 构建入口 | rspack 双入口 `chat.html` + `admin.html` | 管理端独立加载，不拖慢聊天页 |
+| 错误处理 | 统一 `errors` 插件，强制注入 ray | 见 §12.1 |
+| 前端依赖 | **不新增任何运行时依赖** | 保持与 demo 一致的构建体积与环境 |
+
+---
+
