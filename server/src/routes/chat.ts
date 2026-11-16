@@ -16,11 +16,11 @@ import { readUrl, type ReadResult } from '../caps/reader.ts'
 import { searchWeb, type SearchHit } from '../caps/search.ts'
 import type { FileRow } from '../db/types.ts'
 import { moderateText } from '../caps/moderation.ts'
-import { badRequest, quotaExceeded, serverBusy, unauthorized } from '../lib/errors.ts'
+import { badRequest, forbidden, quotaExceeded, serverBusy, unauthorized } from '../lib/errors.ts'
 import { nowIso, todayUtc } from '../lib/time.ts'
 import type { SessionUser } from '../lib/user.ts'
 import { requireUser } from '../plugins/auth.ts'
-import { pickKey, reportKey, type PoolPick } from '../pool/index.ts'
+import { getModel, isModelAllowed, pickKey, reportKey, type PoolPick } from '../pool/index.ts'
 import type {
   ApiErrorBody,
   CreateMessageRequest,
@@ -924,6 +924,13 @@ export const chatRoutes = async (app: FastifyInstance): Promise<void> => {
     }
     const body = parseBody(request.body)
     const ray = request.ray
+    // 权限校验必须在进流之前：付费模型没有 grants 时返回 403（GOAL.md §8.2），
+    // 不能落到 pickKey 里变成 503。
+    const model = getModel(app, body.model)
+    if (!isModelAllowed(app, user, model)) {
+      throw forbidden('该模型未授权')
+    }
+
     // 日配额在进流之前校验：超限直接 429 JSON + ray（GOAL.md §11.1）
     assertDailyQuota(app, user)
 

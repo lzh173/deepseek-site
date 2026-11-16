@@ -128,8 +128,12 @@ export type RegisterFileInput = {
 }
 
 /**
- * 登记一次上传：已有记录则 `ref_count + 1`，否则插入 `ref_count = 1`。
- * 内容相同只存一份，文件名与 MIME 保留首次登记的值（同一 sha256 的元信息保持稳定）。
+ * 登记一次上传。
+ *
+ * 注意：**上传本身不占引用计数**。引用只由「会话引用该附件」建立（见 sessions.ts 的
+ * syncSessionFiles），这样删会话时计数能真正归零并立刻释放文件；
+ * 上传后从没被引用过的文件 `ref_count = 0`，交给 24 小时孤儿清理任务回收。
+ * 内容相同只存一份，文件名与 MIME 保留首次登记的值。
  */
 export const registerFile = (db: Db, input: RegisterFileInput): FileRow => {
   const existing = db
@@ -137,8 +141,7 @@ export const registerFile = (db: Db, input: RegisterFileInput): FileRow => {
     .get(input.sha256) as FileRow | undefined
 
   if (existing) {
-    db.prepare('UPDATE files SET ref_count = ref_count + 1 WHERE sha256 = ?').run(input.sha256)
-    return { ...existing, ref_count: existing.ref_count + 1 }
+    return existing
   }
 
   const row: FileRow = {
@@ -146,7 +149,7 @@ export const registerFile = (db: Db, input: RegisterFileInput): FileRow => {
     size: input.size,
     mime: input.mime,
     name: input.name,
-    ref_count: 1,
+    ref_count: 0,
     created_at: nowIso(),
   }
   db.prepare(
