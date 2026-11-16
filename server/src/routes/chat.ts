@@ -8,10 +8,14 @@
  * - 已经开始输出之后再失败，只能写一帧 error 后关闭，message 里同样带 ray。
  */
 
+import fs from 'node:fs'
 import type { FastifyBaseLogger, FastifyInstance, FastifyReply } from 'fastify'
 import { z } from 'zod'
+import { extractDocument } from '../caps/documents.ts'
 import { readUrl, type ReadResult } from '../caps/reader.ts'
 import { searchWeb, type SearchHit } from '../caps/search.ts'
+import type { FileRow } from '../db/types.ts'
+import { moderateText } from '../caps/moderation.ts'
 import { badRequest, quotaExceeded, serverBusy, unauthorized } from '../lib/errors.ts'
 import { nowIso, todayUtc } from '../lib/time.ts'
 import type { SessionUser } from '../lib/user.ts'
@@ -40,12 +44,14 @@ import {
   StreamTranslator,
   toOpenAiMessages,
   type OpenAiMessage,
+  type ResolvedFile,
 } from '../protocol/translate.ts'
 import {
   FIRST_TOKEN_TIMEOUT_MS,
   streamChatCompletion,
   UpstreamError,
 } from '../providers/openai.ts'
+import { canAccessFile, fileDiskPath, findFile, isSha256 } from '../storage/files.ts'
 
 /** 首次请求之外最多再换 3 次 Key（GOAL.md §7.2） */
 const MAX_RETRIES = 3
@@ -172,6 +178,254 @@ const assertDailyQuota = (app: FastifyInstance, user: SessionUser): void => {
   const used = row?.n ?? 0
   if (used >= user.dailyQuota) {
     throw quotaExceeded()
+  }
+}
+
+// ---------- 附件预处理（GOAL.md §9 #6 / #7、§10） ----------
+
+/** 图片内联上限：超过就不整块读进内存（前端会把图片压到 ≤1 MB，这里按 10 MB 兜底） */
+const MAX_INLINE_IMAGE_BYTES = 10 * 1024 * 1024
+
+/** 本轮全部文档正文的合计上限：再多只会把对话历史挤出去 */
+const MAX_DOCUMENT_CHARS_TOTAL = 40_000
+
+/** 一个待解析的附件块 */
+type AttachmentBlock = { fileId: string; kind: 'image' | 'document' }
+
+/** 从消息块里认出附件块；结构不对的一律忽略（脏数据不该让整轮请求失败） */
+const attachmentOf = (block: unknown): AttachmentBlock | null => {
+  if (block === null || typeof block !== 'object') {
+    return null
+  }
+  const record = block as Record<string, unknown>
+  if (record.type !== 'image' && record.type !== 'document') {
+    return null
+  }
+  const source = record.source
+  if (source === null || typeof source !== 'object') {
+    return null
+  }
+  const fileId = (source as Record<string, unknown>).file_id
+  if (typeof fileId !== 'string' || fileId === '') {
+    return null
+  }
+  return { fileId, kind: record.type }
+}
+
+/** 按消息顺序收集附件；同一个文件只解析一次（历史里可能反复引用同一份） */
+const collectAttachments = (messages: MessageParam[]): AttachmentBlock[] => {
+  const seen = new Set<string>()
+  const blocks: AttachmentBlock[] = []
+  for (const message of messages) {
+    if (message.role !== 'user' || typeof message.content === 'string') {
+      continue
+    }
+    for (const block of message.content) {
+      const attachment = attachmentOf(block)
+      if (!attachment || seen.has(attachment.fileId)) {
+        continue
+      }
+      seen.add(attachment.fileId)
+      blocks.push(attachment)
+    }
+  }
+  return blocks
+}
+
+/** 可以直接拼进 content 的文本：占位说明或文档正文 */
+type TextEntry = { kind: 'text'; text: string }
+
+/** 附件失效：文件被清理 / 从未登记 / 不属于当前用户。只占位，绝不中断对话（§9 铁律 3）。 */
+const expiredFile = (fileId: string): TextEntry => ({
+  kind: 'text',
+  text: `[附件已失效: ${fileId}]`,
+})
+
+/** 看不了图片：明说没看见，不让模型假装看过（§9 铁律 1、§10） */
+const unreadableImage = (fileId: string): TextEntry => ({
+  kind: 'text',
+  text: `[附件: ${fileId}（当前模型无法识别图片）]`,
+})
+
+/** 文档抽取失败：同样显式降级，不用空正文糊弄模型 */
+const unreadableDocument = (fileId: string): TextEntry => ({
+  kind: 'text',
+  text: `[附件: ${fileId}（无法解析该文档）]`,
+})
+
+/** data URL 的 MIME 必须是裸类型（不带参数）；异常值退回 png，部分上游不认别的 */
+const IMAGE_MIME_RE = /^image\/[a-z0-9.+-]+$/i
+
+const normalizeImageMime = (mime: string): string => (IMAGE_MIME_RE.test(mime) ? mime : 'image/png')
+
+/**
+ * 目标模型声明的 vision 能力。
+ * 模型不存在或 caps_json 损坏都按「看不了图」处理：真正的 404/503 由随后的 pickKey 抛出。
+ */
+const modelSupportsVision = (app: FastifyInstance, publicModel: string): boolean => {
+  const row = app.db
+    .prepare('SELECT caps_json FROM models WHERE id = ? AND enabled = 1')
+    .get(publicModel) as { caps_json: string } | undefined
+  if (!row) {
+    return false
+  }
+  try {
+    const caps = JSON.parse(row.caps_json || '{}') as { vision?: unknown }
+    return caps.vision === true
+  } catch {
+    return false
+  }
+}
+
+/** 读原件字节；记录还在但磁盘丢了时返回 null，由调用方降级成「已失效」 */
+const readFileBytes = async (fileId: string): Promise<Buffer | null> =>
+  fs.promises.readFile(fileDiskPath(fileId)).catch(() => null)
+
+/**
+ * 图片 → data URL（base64 内联）。
+ * 只有模型支持 vision 且体积在上限内才会走到这里，读不到字节返回 null。
+ */
+const inlineImage = async (
+  fileId: string,
+  mime: string
+): Promise<{ kind: 'image'; url: string } | null> => {
+  const bytes = await readFileBytes(fileId)
+  if (bytes === null || bytes.byteLength === 0) {
+    return null
+  }
+  return {
+    kind: 'image',
+    url: `data:${normalizeImageMime(mime)};base64,${bytes.toString('base64')}`,
+  }
+}
+
+/** 预算截断标记（与 caps/documents.ts 的单文档标记一致，便于模型识别正文不完整） */
+const DOCUMENT_TRUNCATED_MARK = '\n…（已截断）'
+
+/**
+ * 一个附件解析完成后的产物。文档单独保留「文件名 + 全文」，
+ * 因为注入时的 40000 字符总预算要按**每次引用**扣，而不是按文件扣：
+ * 同一份文档在历史里出现两次时，第二次也可能被截断甚至省略。
+ */
+type AttachmentEntry =
+  /** 图片：[{type:'image_url', image_url:{url}}] */
+  | { kind: 'image'; url: string }
+  /** 文档：filename 是上传时的原始名，text 已按单文档 20000 字符上限截断 */
+  | { kind: 'document'; filename: string; text: string }
+  /** 占位文本（已失效 / 看不了图 / 无法解析） */
+  | { kind: 'text'; text: string }
+
+/** 读文档：抽不出正文时降级成占位文本（绝不抛，见 §9 铁律 3） */
+const documentEntry = async (
+  fileId: string,
+  row: FileRow,
+  bytes: Buffer
+): Promise<AttachmentEntry> => {
+  const extracted = await extractDocument(bytes, row.mime, row.name)
+  if (!extracted) {
+    return unreadableDocument(fileId)
+  }
+  return { kind: 'document', filename: row.name, text: extracted.text }
+}
+
+type AttachmentInput = {
+  app: FastifyInstance
+  user: SessionUser
+  messages: MessageParam[]
+  /** 目标模型能否看图（models.caps_json.vision） */
+  vision: boolean
+  ray: string
+  signal: AbortSignal
+  log: FastifyBaseLogger
+}
+
+/**
+ * 把 image / document 块解析成可以直接发给上游的内容：
+ * - 图片：`caps.vision` 为真且 ≤ 10 MB → data URL；否则占位文本（§10 的①②③链路在前端做）；
+ * - 文档：抽成正文（§9 #6）；
+ * - 文件不存在 / 无权限 / 读盘失败：`[附件已失效: id]`，不中断对话。
+ *
+ * 单个附件出任何问题都只影响它自己的占位，不向外抛。
+ */
+const resolveAttachments = async (
+  input: AttachmentInput
+): Promise<Map<string, AttachmentEntry>> => {
+  const resolved = new Map<string, AttachmentEntry>()
+
+  for (const attachment of collectAttachments(input.messages)) {
+    if (input.signal.aborted) {
+      break
+    }
+    const { fileId, kind } = attachment
+    try {
+      // 先验归属再读盘：不属于当前用户的 id 只会得到「已失效」，不泄露文件是否存在
+      const row = isSha256(fileId) ? findFile(input.app.db, fileId) : null
+      if (!row || !canAccessFile(input.app.db, input.user.id, fileId)) {
+        resolved.set(fileId, expiredFile(fileId))
+        continue
+      }
+
+      if (kind === 'image') {
+        // 看不了图 / 图片过大 / 挂的不是图片：占位。不要把图片硬塞给不支持多模态的上游
+        if (!input.vision || row.size > MAX_INLINE_IMAGE_BYTES || !row.mime.startsWith('image/')) {
+          resolved.set(fileId, unreadableImage(fileId))
+          continue
+        }
+        const image = await inlineImage(fileId, row.mime)
+        resolved.set(fileId, image !== null ? image : expiredFile(fileId))
+        continue
+      }
+
+      const bytes = await readFileBytes(fileId)
+      if (bytes === null) {
+        resolved.set(fileId, expiredFile(fileId))
+        continue
+      }
+      resolved.set(fileId, await documentEntry(fileId, row, bytes))
+    } catch (error) {
+      input.log.warn({ ray: input.ray, fileId, kind, err: error }, '附件解析失败，改用占位文本')
+      resolved.set(fileId, kind === 'image' ? unreadableImage(fileId) : unreadableDocument(fileId))
+    }
+  }
+
+  return resolved
+}
+
+/**
+ * 把解析结果包成翻译层要的回调。每调用一次就扣一次文档预算，
+ * 因此「多个文档合计注入不超过 40000 字符」是按实际注入的正文统计的：
+ * 预算耗尽后，后续文档（含重复引用同一份）直接省略，不会悄悄超出上限。
+ */
+const createFileResolver = (
+  entries: Map<string, AttachmentEntry>
+): ((fileId: string) => ResolvedFile | null) => {
+  let budget = MAX_DOCUMENT_CHARS_TOTAL
+
+  return (fileId: string): ResolvedFile | null => {
+    const entry = entries.get(fileId)
+    if (!entry) {
+      return null
+    }
+    if (entry.kind === 'image') {
+      return { kind: 'image', url: entry.url }
+    }
+    if (entry.kind === 'text') {
+      return { kind: 'text', text: entry.text }
+    }
+
+    const header = `【文档：${entry.filename}】\n`
+    const room = budget - header.length
+    if (room <= DOCUMENT_TRUNCATED_MARK.length) {
+      // 预算已耗尽（连截断标记都放不下）：明确不注入，避免退回 [附件: id] 这类误导性占位
+      return { kind: 'skip' }
+    }
+    const body =
+      entry.text.length > room
+        ? `${entry.text.slice(0, room - DOCUMENT_TRUNCATED_MARK.length)}${DOCUMENT_TRUNCATED_MARK}`
+        : entry.text
+    const text = `${header}${body}`
+    budget -= text.length
+    return { kind: 'text', text }
   }
 }
 
@@ -378,7 +632,9 @@ const withSystemNotes = (messages: OpenAiMessage[], notes: string[]): OpenAiMess
   const extra = notes.join('\n\n')
   const first = messages[0]
   if (first && first.role === 'system') {
-    return [{ role: 'system', content: `${first.content}\n\n${extra}` }, ...messages.slice(1)]
+    // system 一定是翻译层拼出来的字符串；这里兜一下类型（图片分片只会出现在 user 消息里）
+    const head = typeof first.content === 'string' ? first.content : ''
+    return [{ role: 'system', content: `${head}\n\n${extra}` }, ...messages.slice(1)]
   }
   return [{ role: 'system', content: extra }, ...messages]
 }
@@ -668,14 +924,17 @@ export const chatRoutes = async (app: FastifyInstance): Promise<void> => {
     // 日配额在进流之前校验：超限直接 429 JSON + ray（GOAL.md §11.1）
     assertDailyQuota(app, user)
 
-    const baseMessages = toOpenAiMessages({ system: body.system, messages: body.messages })
-    if (!baseMessages.some((message) => message.role !== 'system')) {
-      throw badRequest('请求体不合法：没有可发送的消息')
+    // 本地关键词审核（GOAL.md §9 #10）；未配置词表时纯透传
+    const verdict = moderateText(lastUserText(body.messages))
+    if (verdict.blocked) {
+      request.log.warn({ ray, keyword: verdict.hit }, '内容审核命中本地关键词')
+      throw badRequest('内容不符合使用规范')
     }
+
     // 标题纯本地生成，不产生任何上游调用（GOAL.md §9 #3）
     const title = body.title?.enabled === true ? deriveTitle(body.messages) : undefined
 
-    // 客户端断开 → 中止工具预处理与上游。
+    // 客户端断开 → 中止附件解析、工具预处理与上游。
     // 注意：request 的 close 在请求体读完时也会触发（Node 16+），不能直接当成断开；
     // 只有「响应还没写完 + 连接确实断了」才算客户端走了。响应侧的 close 是同一判定的兜底。
     const client = new AbortController()
@@ -693,6 +952,27 @@ export const chatRoutes = async (app: FastifyInstance): Promise<void> => {
     reply.raw.on('close', onClientGone)
 
     const startedAt = Date.now()
+
+    // 附件必须在构造上游 messages 之前落定：图片内联成 data URL、文档抽成正文
+    // （GOAL.md §9 #6 / #7、§10）。解析失败只留占位文本，不会中断对话。
+    const files = await resolveAttachments({
+      app,
+      user,
+      messages: body.messages,
+      vision: modelSupportsVision(app, body.model),
+      ray,
+      signal: client.signal,
+      log: request.log,
+    })
+    const baseMessages = toOpenAiMessages({
+      system: body.system,
+      messages: body.messages,
+      resolveFile: createFileResolver(files),
+    })
+    if (!baseMessages.some((message) => message.role !== 'system')) {
+      throw badRequest('请求体不合法：没有可发送的消息')
+    }
+
     // 联网工具必须在发起上游请求之前跑完：检索/正文要注入 system，
     // 工具块也要排在第一个文本块之前（GOAL.md §9 #4 / #5）
     const prepared = await prepareTools({

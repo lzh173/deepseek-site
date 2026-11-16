@@ -2,7 +2,7 @@ import clsx from 'clsx'
 import { useTranslate } from '../../i18n/index.js'
 import { IconMicFill16, IconMicOutline16 } from '../base/icons.js'
 import { Tooltip } from '../base/Tooltip.js'
-import type { VoiceInputStatus } from './useVoiceInput.js'
+import { useVoiceMode, useVoiceUnavailableReason, type VoiceInputStatus } from './useVoiceInput.js'
 import styles from './VoiceButton.module.css'
 
 /**
@@ -10,6 +10,7 @@ import styles from './VoiceButton.module.css'
  * 录音中为两层圆：外层半透明光圈 + 内层实心品牌色；
  * 外层先展开、内层随后放大，之后外层按固定节奏呼吸，与音量无关。
  * 按钮左侧显示「录音中 Ns」，窄屏不展示读秒。
+ * 文案区分服务端识别与浏览器识别；服务端未实现时由 hook 里的模块级缓存决定，无需外部传参。
  */
 export const VoiceButton = ({
   status,
@@ -25,15 +26,19 @@ export const VoiceButton = ({
   onClick: () => void
 }) => {
   const t = useTranslate()
+  const mode = useVoiceMode()
+  const unavailable = useVoiceUnavailableReason()
   const recording = status === 'recording'
 
   const label = disabled
-    ? t('voiceInputRequiresHttps')
+    ? t(unavailable === 'unsupported' ? 'voiceInputUnsupported' : 'voiceInputRequiresHttps')
     : recording
       ? t('voiceInputStop')
       : status === 'transcribing'
         ? t('voiceInputCancel')
-        : t('voiceInput')
+        : mode === 'browser'
+          ? t('voiceInputBrowser')
+          : t('voiceInput')
 
   return (
     <>

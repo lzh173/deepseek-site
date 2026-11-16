@@ -2,12 +2,18 @@ import { create } from 'zustand'
 import type { TranslationMessage } from '../../i18n/index.js'
 import { ApiError } from '../api/client.js'
 import { classifyApiError } from '../api/errors.js'
-import { synthesize, TTS_SAMPLE_RATE } from '../api/speech.js'
+import {
+  isSpeechUnsupported,
+  SpeechUnsupportedError,
+  synthesize,
+  TTS_SAMPLE_RATE,
+} from '../api/speech.js'
 import { useSettings } from '../settings.js'
 
 /**
  * 朗读：同一时间只读一条回复。
- * 请求 TTS 的裸 PCM 流，边收边用 AudioContext 按顺序排程播放，首帧到达即出声。
+ * 优先请求服务端 TTS 的裸 PCM 流，边收边用 AudioContext 按顺序排程播放，首帧到达即出声。
+ * 服务端未实现（GOAL.md A-08：MVP 返回 404 / 501）时改用浏览器 speechSynthesis。
  * 状态：loading（已请求、未出声）→ playing → 结束回到 idle。
  */
 export type ReadAloudStatus = 'idle' | 'loading' | 'playing'
@@ -25,6 +31,12 @@ const START_DELAY = 0.1
 
 let current: { controller: AbortController; context: AudioContext } | null = null
 
+/** 服务端 TTS 是否已确认未实现：确认后不再请求，直接用浏览器朗读 */
+let serverTtsUnsupported = false
+
+/** 正在用 speechSynthesis 朗读的那条语句；与服务端朗读互斥 */
+let browserReading: { utterance: SpeechSynthesisUtterance } | null = null
+
 const finish = (controller: AbortController) => {
   if (current?.controller !== controller) {
     return
@@ -34,8 +46,68 @@ const finish = (controller: AbortController) => {
   useReadAloud.setState({ messageId: null, status: 'idle' })
 }
 
+const getSpeechSynthesis = (): SpeechSynthesis | null =>
+  typeof window !== 'undefined' && 'speechSynthesis' in window ? window.speechSynthesis : null
+
+/** 正文含汉字时用中文朗读，其余跟随浏览器语言 */
+const speechLang = (text: string): string =>
+  /[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]/.test(text)
+    ? 'zh-CN'
+    : typeof navigator === 'undefined' || !navigator.language
+      ? 'en-US'
+      : navigator.language
+
+const finishBrowserReading = (utterance: SpeechSynthesisUtterance) => {
+  if (browserReading?.utterance !== utterance) {
+    return
+  }
+  browserReading = null
+  useReadAloud.setState({ messageId: null, status: 'idle' })
+}
+
+/**
+ * 用 speechSynthesis 朗读一段正文；浏览器不支持时返回 false，由调用方按原有失败提示处理。
+ * 语速、音调用默认值；同一时间只读一条，入队前先清空队列。
+ */
+const speakInBrowser = (
+  messageId: string,
+  text: string,
+  onError: (error: unknown) => void
+): boolean => {
+  const synthesis = getSpeechSynthesis()
+  if (!synthesis || typeof SpeechSynthesisUtterance === 'undefined') {
+    return false
+  }
+  const utterance = new SpeechSynthesisUtterance(text)
+  utterance.lang = speechLang(text)
+  utterance.onend = () => finishBrowserReading(utterance)
+  utterance.onerror = (event) => {
+    const failed = browserReading?.utterance === utterance
+    finishBrowserReading(utterance)
+    // 点击停止时走的也是 error（canceled / interrupted），不算失败
+    if (failed && event.error !== 'canceled' && event.error !== 'interrupted') {
+      onError(new Error(`speechSynthesis: ${event.error}`))
+    }
+  }
+  synthesis.cancel()
+  browserReading = { utterance }
+  useReadAloud.setState({ messageId, status: 'playing' })
+  try {
+    synthesis.speak(utterance)
+  } catch {
+    finishBrowserReading(utterance)
+    return false
+  }
+  return true
+}
+
 /** 停止当前朗读（发送、停止生成、切换会话等场景调用） */
 export const stopReadAloud = () => {
+  if (browserReading) {
+    browserReading = null
+    getSpeechSynthesis()?.cancel()
+    useReadAloud.setState({ messageId: null, status: 'idle' })
+  }
   if (current) {
     const { controller } = current
     controller.abort()
@@ -56,6 +128,10 @@ const toFloat32 = (bytes: Uint8Array) => {
 export const describeReadAloudError = (error: unknown): TranslationMessage | string => {
   if (error instanceof ApiError && error.kind === 'protocol') {
     return error.message
+  }
+  // 服务端未实现，且浏览器也没有 speechSynthesis
+  if (error instanceof SpeechUnsupportedError) {
+    return { key: 'ttsUnavailable' }
   }
   // 400 表示这段正文服务端无法合成，与其余失败区分开
   if (error instanceof ApiError && error.status === 400) {
@@ -85,6 +161,13 @@ export const toggleReadAloud = (
   const reading = useReadAloud.getState().messageId
   stopReadAloud()
   if (reading === messageId) {
+    return
+  }
+  // 服务端 TTS 已确认未实现：不再请求，直接用浏览器朗读
+  if (serverTtsUnsupported) {
+    if (!speakInBrowser(messageId, text, onError)) {
+      onError(new SpeechUnsupportedError(501))
+    }
     return
   }
   const controller = new AbortController()
@@ -135,10 +218,19 @@ export const toggleReadAloud = (
         finish(controller)
       }
     } catch (error) {
-      if (!controller.signal.aborted) {
-        finish(controller)
-        onError(error)
+      if (controller.signal.aborted) {
+        return
       }
+      finish(controller)
+      // 服务端未实现：改用浏览器朗读；浏览器也不支持时保持原有失败提示
+      if (isSpeechUnsupported(error)) {
+        serverTtsUnsupported = true
+        if (!speakInBrowser(messageId, text, onError)) {
+          onError(error)
+        }
+        return
+      }
+      onError(error)
     }
   })()
 }

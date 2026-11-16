@@ -183,6 +183,10 @@ export const en = {
   voiceInputEmpty: 'No speech detected',
   voiceInputLimitReached: 'Maximum recording length reached',
   voiceInputRequiresHttps: 'Voice input requires HTTPS',
+  voiceInputBrowser: 'Voice input (browser recognition)',
+  voiceInputUnsupported: 'This browser does not support voice input',
+  voiceInputSwitchToBrowser:
+    'Server speech recognition is unavailable. Switched to browser recognition — please speak again.',
   insufficientBalance: 'Insufficient balance',
   rateLimited: 'Too many requests. Please try again later.',
   ttsPlay: 'Read aloud',

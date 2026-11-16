@@ -3,7 +3,8 @@
  *
  * 两件事：
  *   1. toOpenAiMessages：把前端发来的 MessageParam[] 压成上游认的 messages；
- *      latest_reminder 并入 system，assistant 只留 text，附件暂时降级成文本占位。
+ *      latest_reminder 并入 system，assistant 只留 text；
+ *      附件由调用方先解析成「文本正文 / 内联图片 data URL」再传进来，解析不到的才是文本占位。
  *   2. StreamTranslator：上游流式分片 → message_start / content_block_* / message_delta / message_stop
  *      的事件状态机，块索引从 0 递增且 start/delta/stop 共用同一个 index。
  *
@@ -45,8 +46,29 @@ export type OpenAiChunk = {
   } | null
 }
 
-/** 上游消息：content 恒为字符串（M1 不做图片内联，见文件头说明）。 */
-export type OpenAiMessage = { role: 'system' | 'user' | 'assistant'; content: string }
+/** 上游 content 的分片：纯文本，或内联图片（data URL）。 */
+export type OpenAiContentPart =
+  | { type: 'text'; text: string }
+  | { type: 'image_url'; image_url: { url: string } }
+
+/**
+ * 上游消息：没有图片时 content 用字符串（老上游对 content 数组的兼容性并不一致），
+ * 带图片时才用分片数组。
+ */
+export type OpenAiMessage = {
+  role: 'system' | 'user' | 'assistant'
+  content: string | OpenAiContentPart[]
+}
+
+/** 附件块的解析结果：由 routes/chat.ts 读盘 / 解包后提供，本文件不做任何 I/O。 */
+export type ResolvedFile =
+  | { kind: 'text'; text: string }
+  | { kind: 'image'; url: string }
+  /** 明确不注入（例如本轮文档字数预算已耗尽）：既不塞正文，也不退回 [附件: id] 占位 */
+  | { kind: 'skip' }
+
+/** 按 file_id 取解析结果；返回 null 表示没有可用结果，退回文本占位。 */
+export type FileResolver = (fileId: string) => ResolvedFile | null
 
 /** 非字符串一律当空，上游与前端都可能塞脏数据。 */
 const readString = (value: unknown): string => (typeof value === 'string' ? value : '')
@@ -60,8 +82,8 @@ const isRecord = (value: unknown): value is Record<string, unknown> =>
 const REMINDER_INTRO = '以下是用户当前的环境信息（时间、语言、客户端等），回答时按需参考：'
 
 /**
- * M1 暂不做图片内联：image / document 块（source.type = 'file'）暂时替换成文本占位，
- * 待 storage 模块提供读取接口后，再改成真正的多模态内容块。
+ * 附件的兜底文本：调用方没给解析结果时用它（模型看不了图、文档解析失败、附件已失效等），
+ * 保证对话不会因为附件而中断（GOAL.md §9 铁律 3）。
  */
 const attachmentPlaceholder = (fileId: string): string => `[附件: ${fileId}]`
 
@@ -78,28 +100,74 @@ const fileIdOf = (block: unknown): string => {
 const assistantText = (blocks: AssistantContentBlock[]): string =>
   blocks.map((block) => (block.type === 'text' ? readString(block.text) : '')).join('')
 
-/** user 历史：text 拼接，附件换成文本占位。 */
-const userText = (content: string | UserContentBlock[]): string => {
+/**
+ * user 历史：text 拼接；image / document 块优先用调用方给的解析结果
+ * （图片 → image_url 分片，文档 → 正文文本），拿不到结果时退回文本占位。
+ * 没有图片时返回字符串，有图片时返回分片数组。
+ */
+const userContent = (
+  content: string | UserContentBlock[],
+  resolve: FileResolver | undefined
+): string | OpenAiContentPart[] => {
   if (typeof content === 'string') {
     return content
   }
-  return content
-    .map((block) => {
-      if (block.type === 'text') {
-        return readString(block.text)
+
+  const parts: OpenAiContentPart[] = []
+  let hasImage = false
+
+  /** 相邻文本合并进同一个分片，减少分片数量 */
+  const pushText = (text: string): void => {
+    if (text === '') {
+      return
+    }
+    const last = parts.at(-1)
+    if (last && last.type === 'text') {
+      last.text += text
+      return
+    }
+    parts.push({ type: 'text', text })
+  }
+
+  for (const block of content) {
+    if (block.type === 'text') {
+      pushText(readString(block.text))
+      continue
+    }
+    if (block.type === 'image' || block.type === 'document') {
+      const fileId = fileIdOf(block)
+      if (fileId === '') {
+        continue
       }
-      if (block.type === 'image' || block.type === 'document') {
-        const fileId = fileIdOf(block)
-        return fileId === '' ? '' : attachmentPlaceholder(fileId)
+      const resolved = resolve?.(fileId) ?? null
+      if (resolved === null) {
+        pushText(attachmentPlaceholder(fileId))
+      } else if (resolved.kind === 'skip') {
+        // 调用方明确要求不注入（如预算耗尽）：保持静默，不要退回占位文本
+        continue
+      } else if (resolved.kind === 'image') {
+        parts.push({ type: 'image_url', image_url: { url: resolved.url } })
+        hasImage = true
+      } else {
+        pushText(resolved.text)
       }
-      return ''
-    })
-    .join('')
+      continue
+    }
+    // thinking / 服务端工具块等：本应用不向上游转发
+  }
+
+  if (hasImage) {
+    return parts
+  }
+  // 没有图片就退回字符串：部分中转站不接受 content 数组
+  return parts.map((part) => (part.type === 'text' ? part.text : '')).join('')
 }
 
 export type ToOpenAiMessagesInput = {
   system?: string | undefined
   messages: MessageParam[]
+  /** 附件解析结果；不传时附件一律是文本占位（与旧行为一致） */
+  resolveFile?: FileResolver | undefined
 }
 
 /**
@@ -108,7 +176,7 @@ export type ToOpenAiMessagesInput = {
  *   连续重复的快照只保留一条。
  * - assistant 的 content 是块数组：只拼 type === 'text' 的 text，其余块丢弃；
  *   只剩思考与工具块的轮次没有可发送的正文，整条丢弃。
- * - user 的 content 可以是字符串或块数组：text 拼接，image / document 换成文本占位。
+ * - user 的 content 可以是字符串或块数组：text 拼接，附件按 resolveFile 解析成正文/图片。
  */
 export const toOpenAiMessages = (input: ToOpenAiMessagesInput): OpenAiMessage[] => {
   const messages: OpenAiMessage[] = []
@@ -131,7 +199,7 @@ export const toOpenAiMessages = (input: ToOpenAiMessagesInput): OpenAiMessage[] 
       continue
     }
 
-    messages.push({ role: 'user', content: userText(message.content) })
+    messages.push({ role: 'user', content: userContent(message.content, input.resolveFile) })
   }
 
   const systemParts: string[] = []

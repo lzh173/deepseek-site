@@ -29,6 +29,8 @@ const EnvSchema = z.object({
   RAY_SEARXNG_URL: z.string().url().optional(),
   /** 读链接允许的最大正文字节数 */
   RAY_READ_MAX_BYTES: z.coerce.number().int().min(1024).default(2_000_000),
+  /** 本地关键词审核清单，英文逗号分隔；为空表示不拦截 */
+  RAY_MODERATION_KEYWORDS: z.string().optional(),
 })
 
 export type Env = z.infer<typeof EnvSchema> & {
