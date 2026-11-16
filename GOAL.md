@@ -1,8 +1,9 @@
 # GOAL.md — Ray：DeepSeek 风格的多渠道聊天服务
 
-> 版本 v1.1 · 2026-11-16 · 状态：**已确认，可开工**
+> 版本 v1.2 · 2026-11-16 · 状态：**已确认，可开工**
 >
 > v1.1 变更：① 明确仓库工作流（原 demo 只读参考）；② 付费白名单粒度改为**模型级**；③ `ray` 出现在**所有**错误信息中；④ 补充总体代码结构；⑤ 技术栈微调。
+> v1.2 变更：① 路由与鉴权落到 **Key ⇄ 模型多对多**；② 白名单可收窄到 Key；③ 公开模型不划分档位；④ 外层由 Cloudflare Access 承接；⑤ 可移植性列为硬要求；⑥ 工具链验证通过、构建脚本跨平台化。
 >
 > 本文是唯一目标文档。实现以本文为准；与本文冲突的临时想法一律作废。
 
@@ -85,6 +86,9 @@
 | A-08 | 语音（ASR/TTS）MVP 直接走浏览器 Web Speech API，BFF 返回 501 | 零成本；后续可换本地 whisper |
 | A-09 | 产品名暂定 **Ray**，代号同时作为请求编号前缀 | 正式名/域名待定，不阻塞 |
 | A-10 | 单机 Docker Compose 部署（bff + caddy + searxng） | 后续可拆分 |
+| A-11 | **外层由 Cloudflare Access 挡在前面**，应用内不做 IP 白名单 | HTTPS 由 Cloudflare 终止，BFF 本地可跑 http，不自行处理证书 |
+| A-12 | 公开模型**不划分档位**，一个模型一条池子 | 质量波动由池内 Key 决定，接受 |
+| A-13 | 会话与文件目录可通过 `RAY_DATA_DIR` 配置，默认 `./data` | 便于迁移与容器挂载 |
 
 ---
 
@@ -256,44 +260,59 @@ channels(id, name, kind['openai'|'anthropic'|'gemini'|'ollama'],
          base_url, tier['paid'|'free'], priority, timeout_ms,
          concurrency, enabled, created_at)
 
-channel_models(channel_id, upstream_model, public_model, weight, enabled)
-
-keys(id, channel_id, key_cipher, label, weight,
+keys(id, channel_id, key_cipher, label, group_label, weight,
      status['active'|'cooling'|'disabled'],
      cooldown_until, daily_quota, fail_count, last_ok_at, created_at)
+
+-- ★ 路由的唯一依据：Key ⇄ 模型，多对多
+key_models(key_id, upstream_model, public_model, weight, enabled)
 
 key_usage(key_id, day, requests, tokens)        -- 复合主键，按天分桶
 
 models(id, display_name, context, caps_json, tier,
        fallback_chain_json, enabled)
 
-grants(user_id, model_id, expires_at NULL)   -- 付费白名单：到模型，NULL 有效期 = 永久
+-- 付费白名单：模型级，可收窄到指定 Key
+grants(user_id, model_id, key_id NULL, expires_at NULL)
 auth_sessions(token_hash, user_id, expires_at, created_at)
 user_prefs(user_id, key, value_json)
 
 sessions(id, user_id, title, payload, created_at, updated_at)
 files(sha256, size, mime, name, ref_count, created_at)
 session_files(session_id, sha256)
-usage_log(ray, ts, user_id, channel_id, key_id, model,
-          in_tok, out_tok, ms, status, err)
+usage_log(ray, ts, user_id, channel_id, key_id, public_model,
+          upstream_model, in_tok, out_tok, ms, status, err)
+```
+
+**为什么是 `key_models` 而不是 `channel_models`**：同一个中转站里，不同分组的 Key 能调的模型集合不同（有的 Key 只买了 A 组，有的买了 B 组）；同一把 Key 也能同时覆盖多个模型。所以"渠道 → 模型"表达不了真实可达性，**必须落成 Key 与模型的多对多**。渠道只承载 `base_url` 与鉴权方式，模型可达性完全由 `key_models` 决定。
+
+一个 `public_model` 只是一个名字，它背后可以是任意多条 `(key, upstream_model)` 记录；这就是"公开模型不分组、由池子兜底"的实现基础。
+
 ```
 
 ### 7.2 选择算法
 
 ```
-候选渠道 = models[id] 允许 && 角色有权限 && enabled
-        → 按 priority 升序分组，组内按 weight 加权随机
-        → 组内遍历 Key：
-             过滤 status=active && cooldown_until < now && used_today < daily_quota
-             排序 used_today/daily_quota 升序，同级按 weight
-             成功 → requests+1, fail_count=0, last_ok_at=now
-             429  → cooldown = min(60 × 2^fail_count, 3600)s，优先用 Retry-After
-             401/403 → status=disabled，后台红灯 + 告警
-             5xx/超时 → cooldown 30s，换下一把
-        → 组内耗尽 → 下一 priority
-        → 全部耗尽 → 模型回退链（models.fallback_chain）
-        → 仍失败 → §12 服务器繁忙
+输入：public_model P、用户 U
+
+1. 授权判定（见 §8）：free 模型 / admin / 有效 grants(U, P, key?)
+2. 候选 = key_models 中 public_model = P 且 enabled 的记录
+     · grants 若收窄到某把 key，则只保留该 key 的记录
+     · 同一 key 若有多条 upstream_model 指向 P，取 weight 最高的一条，按 key 去重
+3. 过滤 key：
+     key.status = 'active'
+     key.cooldown_until < now
+     今日 requests < key.daily_quota
+     channel.enabled = true
+4. 排序：used_today/daily_quota 升序（最闲优先）→ 同值按 channel.priority → 再按 weight 加权随机
+5. 逐条尝试：
+     成功    → requests+1, fail_count=0, last_ok_at=now
+     429     → cooldown = min(60 × 2^fail_count, 3600)s，优先用 Retry-After
+     401/403 → key.status='disabled'，后台红灯告警
+     5xx/超时 → cooldown 30s，换下一条
+6. 候选耗尽 → models[P].fallback_chain（另一批 key_models）→ 仍失败 → 503 server_busy
 ```
+
 
 **硬约束**：只在**收到第一个正文 token 之前**允许无感换 Key。首 token 超时 8s，超时立即切换。已经向客户端输出过内容后，不再换模型，只结束流并提示中断。
 
@@ -315,17 +334,21 @@ usage_log(ray, ts, user_id, channel_id, key_id, model,
 
 ### 8.1 授权模型
 
-**白名单粒度 = 模型（`models.id`），不是渠道、不是 Key。**
-
-理由：模型是用户唯一能感知的、也是前端唯一会显示的东西；渠道和 Key 是实现细节，会随池子伸缩而变。用户被授权的是"能用 `ray-pro` 这个模型"，至于它背后落在哪个渠道、用哪把 Key，由 `pool` 决定。
+**白名单的授权对象 = 模型，但可收窄到"某把 Key 上的某个模型"。**
 
 ```
-grants(user_id, model_id, expires_at)   -- 一条记录 = 该用户可用该模型
+grants(user_id, model_id, key_id NULL, expires_at NULL)
 ```
 
-一个模型可以同时由多个 (渠道 × Key) 承载，白名单不感知这种映射。
+| 写法 | 含义 |
+|---|---|
+| `key_id IS NULL` | 该用户可用 `model_id`，走该模型下任意可用的 Key |
+| `key_id = K` | 该用户**只能**通过 Key K 使用该模型（用于"只给某人开某个渠道的额度"） |
 
-> 关于"到 key 的模型"：若你指的是**精确到某把 Key 上的某个模型**，结构上只需把 `grants.model_id` 换成 `channel_model_id`（即 `channel_models` 行），其余不变，属于后置可加的细化。**当前按模型级实现**，因为对用户和 UI 都更自然。
+之所以允许收窄到 Key：因为**模型可达性是 Key 级的**（见 §7.1），不同 Key 背后的成本、额度、分组都不同；只授权模型不授权 Key，管理员就无法控制"这个人只能用便宜的那把 Key"。
+
+- 一个模型可同时由多个 (Key × 上游模型) 承载，白名单不感知这种映射，除非显式收窄。
+- 管理端默认按**模型**勾选；需要精细控制时展开到 Key。
 
 ### 8.2 判定规则
 
@@ -333,18 +356,21 @@ grants(user_id, model_id, expires_at)   -- 一条记录 = 该用户可用该模�
 |---|---|
 | `models.tier = free` | 所有已登录用户可用 |
 | `models.tier = paid` 且 `role = admin` | 可用 |
-| `models.tier = paid` 且存在有效 `grants` 记录 | 可用 |
-| `models.tier = paid` 且无授权 | **不可见（模型列表不返回）+ 请求 403** |
-| `grants.expires_at` 已过 | 等同无授权，立即生效 |
+| `models.tier = paid` 且存在有效 `grants(user, model)` | 可用 |
+| `models.tier = paid` 且 `grants.key_id` 非空 | 仅走该 Key，其他 Key 对其不可见 |
+| `models.tier = paid` 且无授权 | **不可见（列表不返回）+ 请求 403** |
+| `grants.expires_at` 已过 | 等同无授权，立即生效（缓存 TTL ≤ 30 s） |
 
 - `GET /api/models`：按上述规则过滤，用户看不见就没法误点。
 - `POST /api/chat`：**再校验一次**，只信服务端；伪造请求体命中付费模型 → `403`。
-- 管理端「用户」页：按**模型**勾选白名单，可填有效期；套用/删除即时生效（权限判定不走缓存，或缓存 TTL ≤ 30s）。
+- 管理端「用户」页：按模型勾选白名单，可填有效期，可展开到 Key。
 
 ### 8.3 与渠道的关系
 
-- `channel.tier` 只影响**池子的成本归属**（付费渠道消耗真金白银），不直接参与鉴权。
-- 模型的可达性 = 该模型下所有可用渠道的并集；若某付费模型的全部渠道都不可用，则该模型在列表中标记 `available: false`，请求返回 `503`。
+- `channel.tier` 只决定**成本归属与统计口径**，不直接参与鉴权。
+- 模型可达性 = 该模型下所有可用 `(key, upstream_model)` 记录的并集；全部不可用时该模型标 `available: false`，请求返回 `503`。
+- **公开模型不划分档位**：不做 fast/chat/pro 的层级，一个公开模型就是一条池子，档内任意 Key 可互相顶替。
+
 
 
 ---
@@ -490,7 +516,7 @@ grants(user_id, model_id, expires_at)   -- 一条记录 = 该用户可用该模�
 | 仪表盘 | 今日请求/失败率/token、渠道健康灯、Key 池余量条、最近错误 |
 | 渠道 | 增删改、连通性测试、优先级、超时、并发、启停、付费/免费切换 |
 | 账号池 | 批量导入、掩码显示、状态、权重、今日用量、冷却倒计时、单 Key 测试 |
-| 模型 | 公开名 ↔ 上游名映射、能力位、context、tier、回退链 |
+| 模型 | 公开名、能力位、context、tier、回退链；**Key ⇄ 上游模型映射矩阵**（哪把 Key 能调哪些模型） |
 | 用户 | 角色、日配额、重置密码、**付费模型白名单（按模型勾选 + 有效期）** |
 | 日志 | 按 ray / 用户 / 模型 / 渠道 / 状态筛选 |
 | 系统 | 磁盘用量、孤儿文件清理、备份导出 |
@@ -519,9 +545,38 @@ grants(user_id, model_id, expires_at)   -- 一条记录 = 该用户可用该模�
 - 备份：`sqlite3 .backup` + `rsync data/files`，每日定时。
 - 日志结构化（pino），携带 ray，可直接 grep。
 
+### 16.1 可移植性与可部署性（硬要求）
+
+| 项 | 要求 |
+|---|---|
+| 操作系统 | Windows 开发、Linux 部署，**同一套脚本两边都能跑**；不允许出现只有 POSIX 才能执行的 `package.json` 脚本 |
+| Node | `>= 22.12`，用 `.node-version` 固定；本机实测 v24.19.0 |
+| pnpm | 通过 corepack 管理，`packageManager` 字段固定版本；本机实测 12.21.0 |
+| 依赖目录 | pnpm store / cache 属于**机器本地配置**，绝不写进仓库；每台机器自行 `pnpm config set store-dir <非系统盘>` |
+| 路径 | 代码中禁止硬编码盘符；数据目录、端口、密钥全部来自环境变量 |
+| 配置 | `.env.example` 提供全部键位与默认值；`.env` 不入库 |
+| 部署 | Docker Compose 为第一形态，裸机运行为第二形态；两者共用同一份环境变量 |
+| 数据库 | SQLite 单文件，可直接复制迁移；不使用任何本地安装的数据库服务 |
+| 时间 | 一律 UTC 存储，展示按用户时区 |
+
+### 16.2 工具链验证结果（2026-11-16，本机）
+
+| 检查 | 命令 | 结果 |
+|---|---|---|
+| 依赖安装 | `pnpm install` | 235 包，20.6 s，store 在 `E:\.pnpm-store` |
+| 生产构建 | `pnpm build` | 成功，745 ms，`dist` 4.29 MB，JS 已压缩无 sourcemap |
+| 开发服务 | `pnpm dev` | 成功，8090 端口，591 ms |
+| 类型检查 | `pnpm type` | 通过 |
+| Lint | `pnpm lint` | 0 warning / 0 error（118 文件） |
+
+> 构建脚本已改为跨平台：`"build": "rspack build -c rspack.config.ts"`，模式由 `rspack.config.ts` 依据 `serve`/`build` 子命令判定，不再依赖 `NODE_ENV=production` 前缀（Windows cmd 不支持）。`dist` 清理由 `output.clean: true` 负责。
+
 ---
 
 ## 17. 里程碑与验收
+
+### M0 · 工具链验证 ✅ 已完成（2026-11-16）
+`pnpm install` / `pnpm build` / `pnpm dev` / `pnpm type` / `pnpm lint` 全部通过，构建脚本已改为跨平台。
 
 ### M1 · 骨架（8–10 人日）
 Fastify + 登录 + SQLite + 协议翻译 + 单渠道 + 会话/文件存储。
