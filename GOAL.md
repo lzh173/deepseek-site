@@ -652,6 +652,52 @@ title / search / reader / parse / asr / tts / moderation 全部落地。
 
 ---
 
+## 20. 实现状态（2026-11-16）
+
+### 已完成
+
+| 里程碑 | 状态 | 说明 |
+|---|---|---|
+| M0 工具链 | ✅ | install / build / dev / type / lint 全绿；构建脚本跨平台化 |
+| M1 骨架 | ✅ | Fastify + 登录 + 12 张表 + 会话/文件存储 + `/api/chat` 协议翻译 |
+| M2 渠道与账号池 | ✅ | 渠道/Key CRUD、批量导入、掩码、测试、冷却重置、Key×模型映射、付费分级、白名单、日志、系统页 + 管理后台 7 页 |
+
+### 待做
+
+| 里程碑 | 内容 |
+|---|---|
+| M3 能力兜底 | 标题（已做）、搜索、读链接、文档解析、多模态降级、语音 |
+| M4 打磨 | 日配额强制、限流、孤儿文件定时清理、备份脚本、压测 |
+
+### 实现期偏离（已生效）
+
+1. **`better-sqlite3` → `node:sqlite`**：Node 24 + ESM 下前者会在 GC 时 native abort（已最小复现）。
+2. **Drizzle → 手写 SQL 迁移**：`db/migrations/*.sql` + 60 行迁移器。
+3. **tsx → `node --experimental-strip-types`**：少一层构建；`erasableSyntaxOnly` 保证语法可剥离。
+4. **运行时要求 Node ≥ 24**（`node:sqlite` 在 23.4 前需 flag）。
+5. 管理端响应包裹统一为 `{ray, items}` / `{ray, item}` / `{ray, ok}` / `{ray, grants}` / `{ray, total, items}`。
+
+### 已验证（端到端，非单元测试）
+
+- 登录 / 401 / 403 / 429 / 503 的 `error.message` 均带 `ray`，响应头恒有 `x-ray-id`
+- 渠道 → Key（掩码）→ 模型 → Key×模型映射 → `/api/models` 的 `available` 正确流转
+- 普通用户看不到付费模型；授权 `ray-pro × 指定 Key` 后可见；未授权 Key 不参与故障转移
+- 假 Key 触发 401 → Key 自动 `disabled` → 全部耗尽返回 503 `server_busy`
+- 用本地 mock 上游验证完整 SSE 事件序列：`message_start → thinking 块 → signature_delta → text 块 → message_delta(title+usage) → message_stop`，与前端 `parseEvent.ts` 逐字段匹配
+- 会话 PUT/GET/PATCH/DELETE 往返，附件 sha256 去重与 `ref_count` 维护
+- 双入口构建产物 `dist/index.html` + `dist/admin.html` 均可由 BFF 托管并正确加载静态资源
+
+### 已知缺口
+
+- 用户日配额、限流插件未接
+- 搜索 / 读链接 / 引用块未产出（M3）
+- 图片未内联给多模态模型（M3）
+- 语音接口 BFF 未实现
+- 历史导入导出的服务端暂存未实现
+- 管理端写操作审计日志未做
+
+---
+
 ## 附 A：外部依赖清单
 
 **前端**（沿用 chat-demo，不新增运行时依赖）
