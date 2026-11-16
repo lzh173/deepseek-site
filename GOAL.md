@@ -88,7 +88,7 @@
 | A-07 | 搜索用自建 SearXNG；文档解析用纯 JS 库（不还原版面） | 免费、可控 |
 | A-08 | 语音（ASR/TTS）MVP 直接走浏览器 Web Speech API，BFF 返回 501 | 零成本；后续可换本地 whisper |
 | A-09 | 产品名暂定 **Ray**，代号同时作为请求编号前缀 | 正式名/域名待定，不阻塞 |
-| A-10 | 单机 Docker Compose 部署（bff + caddy + searxng） | 后续可拆分 |
+| A-10 | **非 Docker 部署为第一形态**：单个 Node 进程 + 数据目录（Windows 计划任务 / Linux systemd）；Docker 仅作可选 | 现场机器未装容器运行时 |
 | A-11 | **外层由 Cloudflare Access 挡在前面**，应用内不做 IP 白名单 | HTTPS 由 Cloudflare 终止，BFF 本地可跑 http，不自行处理证书 |
 | A-12 | 公开模型**不划分档位**，一个模型一条池子 | 质量波动由池内 Key 决定，接受 |
 | A-13 | 会话与文件目录可通过 `RAY_DATA_DIR` 配置，默认 `./data` | 便于迁移与容器挂载 |
@@ -563,7 +563,7 @@ PRIMARY KEY (user_id, model_id, key_id)
 | 依赖目录 | pnpm store / cache 属于**机器本地配置**，绝不写进仓库；每台机器自行 `pnpm config set store-dir <非系统盘>` |
 | 路径 | 代码中禁止硬编码盘符；数据目录、端口、密钥全部来自环境变量 |
 | 配置 | `.env.example` 提供全部键位与默认值；`.env` 不入库 |
-| 部署 | Docker Compose 为第一形态，裸机运行为第二形态；两者共用同一份环境变量 |
+| 部署 | **裸机运行为第一形态**（Windows 计划任务 / Linux systemd + `deploy/`），Docker Compose 为可选；两者共用同一份环境变量 |
 | 数据库 | SQLite 单文件，可直接复制迁移；不使用任何本地安装的数据库服务 |
 | 时间 | 一律 UTC 存储，展示按用户时区 |
 

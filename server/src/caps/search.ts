@@ -18,7 +18,7 @@ export type SearchHit = {
 }
 
 /** 一次搜索的总时限：超过就按「没有结果」处理（§9 #4 要求 8 秒） */
-const TIMEOUT_MS = 8_000
+const TIMEOUT_MS = 10_000
 /** 单页最多读这么多字节：兜底抓取可能碰到超大页面，只取前段 */
 const MAX_BODY_BYTES = 1_000_000
 /** 前端来源面板最多展示的条数 */
@@ -297,6 +297,91 @@ const parseDuckDuckGo = (html: string): SearchHit[] => {
   return hits
 }
 
+/**
+ * Bing 的结果链接有时是 `bing.com/ck/a?…&u=a1<base64url>` 的跳转壳，
+ * `u` 去掉前缀 `a1` 后做 base64url 解码就是真实地址。
+ */
+const realBingUrl = (href: string): string | null => {
+  if (href === '') {
+    return null
+  }
+  const absolute = href.startsWith('//') ? `https:${href}` : href
+  try {
+    const parsed = new URL(absolute, 'https://www.bing.com')
+    if (parsed.hostname.endsWith('bing.com') && parsed.pathname.startsWith('/ck/a')) {
+      const target = parsed.searchParams.get('u') ?? ''
+      if (target.startsWith('a1')) {
+        const padded = target.slice(2).replace(/-/gu, '+').replace(/_/gu, '/')
+        try {
+          const decoded = Buffer.from(padded, 'base64').toString('utf8')
+          return decoded.startsWith('http') ? decoded : null
+        } catch {
+          return null
+        }
+      }
+      return null
+    }
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+      return null
+    }
+    return parsed.toString()
+  } catch {
+    return null
+  }
+}
+
+/** Bing 结果块：`<li class="b_algo">` 里依次是 `<h2><a href>标题</a></h2>` 与 `<p>摘要</p>` */
+const parseBing = (html: string): SearchHit[] => {
+  const hits: SearchHit[] = []
+  const blocks = html.split(/<li\b[^>]*class="[^"]*\bb_algo\b[^"]*"[^>]*>/iu)
+  for (let index = 1; index < blocks.length; index += 1) {
+    const block = blocks[index] ?? ''
+    const titleMatch = /<h2\b[^>]*>[\s\S]*?<a\b([^>]*)>([\s\S]*?)<\/a\s*>/iu.exec(block)
+    if (!titleMatch) {
+      continue
+    }
+    const url = realBingUrl(attributeOf(titleMatch[1] ?? '', 'href'))
+    if (!url) {
+      continue
+    }
+    const title = collapse(decodeEntities(stripTags(titleMatch[2] ?? '')))
+    const snippetMatch = /<p\b[^>]*>([\s\S]*?)<\/p\s*>/iu.exec(block)
+    const snippet = snippetMatch ? collapse(decodeEntities(stripTags(snippetMatch[1] ?? ''))) : ''
+    hits.push({
+      title: title === '' ? url : title,
+      url,
+      snippet,
+      siteName: null,
+      pageAge: null,
+    })
+    if (hits.length >= MAX_HITS) {
+      break
+    }
+  }
+  return hits
+}
+
+const searchBing = async (query: string, signal: AbortSignal): Promise<SearchHit[]> => {
+  const endpoint = new URL('https://www.bing.com/search')
+  endpoint.searchParams.set('q', query)
+  endpoint.searchParams.set('setlang', 'zh-CN')
+
+  const response = await fetch(endpoint, {
+    method: 'GET',
+    signal,
+    headers: {
+      accept: 'text/html,application/xhtml+xml',
+      'accept-language': 'zh-CN,zh;q=0.9,en;q=0.8',
+      'user-agent': USER_AGENT,
+    },
+  })
+  if (!response.ok) {
+    await response.body?.cancel().catch(() => undefined)
+    throw new Error(`Bing 返回 ${response.status}`)
+  }
+  return parseBing(await readBodyText(response, MAX_BODY_BYTES))
+}
+
 const searchDuckDuckGo = async (query: string, signal: AbortSignal): Promise<SearchHit[]> => {
   const endpoint = new URL('https://html.duckduckgo.com/html/')
   endpoint.searchParams.set('q', query)
@@ -319,7 +404,7 @@ const searchDuckDuckGo = async (query: string, signal: AbortSignal): Promise<Sea
 
 // ---------- 对外入口 ----------
 
-/** 单个查询：SearXNG 优先，未配置或失败才走 DDG 抓取 */
+/** 单个查询：SearXNG 优先，未配置或失败时走 Bing，再退到 DDG 抓取 */
 const searchOne = async (query: string, signal: AbortSignal): Promise<SearchHit[]> => {
   if (signal.aborted) {
     return []
@@ -333,7 +418,27 @@ const searchOne = async (query: string, signal: AbortSignal): Promise<SearchHit[
       return []
     }
   }
-  return attempt(() => searchDuckDuckGo(query, signal))
+  // Bing 在境内通常可达，作为无 SearXNG 时的第一兜底。
+  // 注意区分「请求失败」与「确实没有结果」：前者才继续退 DDG，否则白白多等一个超时。
+  try {
+    return await searchBing(query, signal)
+  } catch {
+    if (signal.aborted) {
+      return []
+    }
+    return attempt(() => searchDuckDuckGo(query, signal))
+  }
+}
+
+/**
+ * 预热：进程刚起来时到 bing.com 的首次 TLS 握手可能超过搜索预算（实测冷启动 ~8s），
+ * 先发一个只建连、不读正文的请求，后续真实搜索就能落在一秒内。
+ * 失败无所谓，纯粹是性能优化。
+ */
+export const warmupSearch = (): void => {
+  void fetch('https://www.bing.com/', { headers: { 'user-agent': USER_AGENT } })
+    .then((response) => response.body?.cancel())
+    .catch(() => undefined)
 }
 
 /**

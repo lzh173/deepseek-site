@@ -1,0 +1,35 @@
+[Unit]
+Description=Ray chat service (BFF + web)
+Documentation=file:///opt/ray/docs/runbook.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# 建议用独立用户，且该用户要能读写 /opt/ray/data
+User=ray
+Group=ray
+WorkingDirectory=/opt/ray/server
+
+# 环境变量从 .env 读取（server/.env，格式为 KEY=VALUE）
+# 也可以用 EnvironmentFile=/opt/ray/server/.env 代替下面的 --env-file
+Environment=NODE_ENV=production
+ExecStart=/usr/bin/env node --env-file-if-exists=.env --experimental-strip-types src/index.ts
+
+Restart=always
+RestartSec=3
+# SSE 长连接，优雅退出给足时间
+TimeoutStopSec=20
+KillSignal=SIGTERM
+
+StandardOutput=append:/var/log/ray/ray.log
+StandardError=append:/var/log/ray/ray.err.log
+
+# 基础加固（按需调整）
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ReadWritePaths=/opt/ray/data /var/log/ray
+
+[Install]
+WantedBy=multi-user.target

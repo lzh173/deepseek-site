@@ -62,20 +62,116 @@ pnpm dev
 
 浏览器打开 http://localhost:8090 。管理后台是 http://localhost:8090/admin.html 。
 
-## 4. 生产部署（单机 Docker）
+## 4. 生产部署（非 Docker，首选）
+
+Ray 只需要一个 Node 进程 + 一个数据目录，**不需要容器**。BFF 可以顺便把 `dist` 一起托管，
+所以整套服务就是「一个进程 + 一个反代/隧道」。
+
+### 4.1 直接跑起来
 
 ```powershell
-copy server\.env.example server\.env   # 填 RAY_MASTER_KEY / 管理员密码
+cd E:\CODEX-NOworkspaces\deepseek-lzh
+pnpm install
+pnpm build                      # 产出 dist/
+copy server\.env.example server\.env
+#   必填：RAY_ADMIN_PASSWORD
+#   建议：RAY_DATA_DIR=../data
+#        RAY_WEB_DIR=../dist        ← 让 BFF 直接托管前端
+cd server
+pnpm start
+```
+
+打开 `http://127.0.0.1:3000/`（聊天）与 `/admin.html`（后台）。
+
+> `pnpm start` 等价于 `node --env-file-if-exists=.env --experimental-strip-types src/index.ts`。
+> Node ≥ 24 时类型剥离默认开启，这个 flag 只是向下兼容 22/23。
+
+### 4.2 常驻运行
+
+**Windows（计划任务）**
+
+```powershell
+# 手动前台跑（崩溃自动重启 + 日志落盘）
+pwsh -File deploy\windows\start-ray.ps1
+
+# 注册成计划任务：默认当前用户登录时启动
+pwsh -File deploy\windows\install-task.ps1
+
+# 需要开机即启（管理员 PowerShell）
+pwsh -File deploy\windows\install-task.ps1 -AtStartup
+
+# 卸载
+pwsh -File deploy\windows\install-task.ps1 -Uninstall
+```
+
+日志写在仓库根目录 `logs/ray-<时间戳>.log`。
+
+**Linux（systemd）**
+
+```bash
+sudo useradd -r -s /usr/sbin/nologin ray
+sudo mkdir -p /opt/ray /var/log/ray
+sudo chown -R ray:ray /opt/ray /var/log/ray
+# 把仓库放到 /opt/ray，然后：
+sudo cp deploy/systemd/ray.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now ray
+sudo journalctl -u ray -f          # 或看 /var/log/ray/ray.log
+```
+
+### 4.3 外网入口
+
+推荐 **Cloudflare Tunnel**（不占端口、自动 HTTPS、可叠加 Access 做鉴权）：
+
+```powershell
+# 一次性
+winget install --id Cloudflare.cloudflared
+cloudflared tunnel login
+cloudflared tunnel create ray
+# ~/.cloudflared/config.yml 里写：
+#   tunnel: ray
+#   credentials-file: <路径>
+#   ingress:
+#     - hostname: ray.example.com
+#       service: http://127.0.0.1:3000
+#     - service: http_status:404
+cloudflared service install      # 注册成系统服务
+```
+
+走 HTTPS 后记得把 `.env` 里的 `RAY_COOKIE_SECURE` 改成 `true`。
+
+不用隧道也可以直接反代：Caddy 一行 `reverse_proxy 127.0.0.1:3000`，或 nginx 的 `proxy_pass`。
+记得给 SSE 关掉缓冲（`proxy_buffering off;` / Caddy 默认即可）。
+
+### 4.4 搜索（可选）
+
+**不装 SearXNG 也能用**：内置兜底会抓 Bing 结果页（实测境内可达），失败再退 DuckDuckGo，
+都失败就退化成普通对话。代价是首次搜索可能要等 1~2 秒，且结果质量不如 SearXNG。
+
+想要更稳的搜索，把 `RAY_SEARXNG_URL` 指向任意 SearXNG（自建或可信实例）：
+
+```bash
+# 非 Docker 装法（官方脚本，Python 环境）
+git clone https://github.com/searxng/searxng.git /opt/searxng
+cd /opt/searxng && python3 -m venv .venv && . .venv/bin/activate
+pip install -r requirements.txt
+# settings.yml 里确保 search.formats 含 json
+python searx/webapp.py            # 默认 8888
+```
+
+Windows 上如果没有 Python 环境，建议直接用 Bing 兜底，或在一台 Linux 机器上单独跑 SearXNG，
+把 URL 指过去。
+
+## 4.5 Docker（可选）
+
+`server/Dockerfile` 与 `docker-compose.yml` 仍然可用（含内置 SearXNG），但不是必须：
+
+```powershell
+copy server\.env.example server\.env
 docker compose --env-file server/.env up -d --build
 ```
 
-- 镜像构建在 `server/Dockerfile`，`node:24-bookworm-slim`，无编译依赖
-- 数据卷 `ray-data` 挂到容器 `/data`
-- 端口只绑 `127.0.0.1:3000`，外网入口交给 Cloudflare Tunnel / Access（见 GOAL §15）
-- 走 HTTPS 时 `.env` 里设 `RAY_COOKIE_SECURE=true`
-
-想让 BFF 一并托管前端产物，把构建好的 `dist` 挂进容器并设 `RAY_WEB_DIR=/app/dist`；
-否则用 Caddy / Cloudflare Pages 托管 `dist`，把 `/api` 反代到 3000 即可。
+镜像基于 `node:24-bookworm-slim`，不依赖原生编译；数据在 `ray-data` 卷，端口只绑 `127.0.0.1:3000`。
 
 ## 5. 管理后台
 

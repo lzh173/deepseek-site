@@ -15,6 +15,7 @@ import { dbPlugin } from './plugins/db.ts'
 import { errorPlugin } from './plugins/errors.ts'
 import { requestIdPlugin } from './plugins/requestId.ts'
 import { adminRoutes } from './routes/admin/index.ts'
+import { warmupSearch } from './caps/search.ts'
 import { authRoutes } from './routes/auth.ts'
 import { chatRoutes } from './routes/chat.ts'
 import { fileRoutes } from './routes/files.ts'
@@ -84,6 +85,9 @@ export const buildApp = async (): Promise<FastifyInstance> => {
   )
 
   startJobs(app)
+
+  // 预热搜索兜底连接（冷启动首次 TLS 握手可能超过搜索预算，会拖慢第一条带搜索的消息）
+  warmupSearch()
 
   // 可选：把前端构建产物（dist）一起托管，便于单容器部署。
   // 未配置 RAY_WEB_DIR 或目录不存在时跳过，静态资源交给前置的 Caddy / Cloudflare。
