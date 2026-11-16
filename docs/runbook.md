@@ -143,6 +143,10 @@ cloudflared service install      # 注册成系统服务
 不用隧道也可以直接反代：Caddy 一行 `reverse_proxy 127.0.0.1:3000`，或 nginx 的 `proxy_pass`。
 记得给 SSE 关掉缓冲（`proxy_buffering off;` / Caddy 默认即可）。
 
+> 默认 `RAY_HOST=127.0.0.1`，只有本机能访问。要让局域网直连，把 `RAY_HOST` 改成 `0.0.0.0`
+> 并在防火墙放行端口（Windows：`New-NetFirewallRule -DisplayName Ray -Direction Inbound -LocalPort 3000 -Protocol TCP -Action Allow`）。
+> 公网暴露仍然建议走隧道，不要直接把 3000 端口映射出去。
+
 ### 4.4 搜索（可选）
 
 **不装 SearXNG 也能用**：内置兜底会抓 Bing 结果页（实测境内可达），失败再退 DuckDuckGo，
