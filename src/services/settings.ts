@@ -7,9 +7,10 @@ export type Locale = 'zh-CN' | 'en-US'
 /** 主题偏好；默认跟随系统 */
 export type ThemePreference = 'light' | 'dark' | 'system'
 
-/** 本机设置，存 localStorage：API Key、语言、主题、位置、朗读音色、深度思考与智能搜索开关、侧边栏收起状态 */
+/** 本机设置，存 localStorage：模型偏好、语言、主题、位置、朗读音色、深度思考与智能搜索开关、侧边栏收起状态 */
 type Settings = {
-  apiKey: string | null
+  /** 选中的模型 id；null 表示跟随服务端列表的第一个可用模型 */
+  model: string | null
   locale: Locale
   themePreference: ThemePreference
   location: UserLocation | null
@@ -20,7 +21,7 @@ type Settings = {
 }
 
 const KEYS = {
-  apiKey: 'chat-demo:api-key',
+  model: 'chat-demo:model',
   locale: 'chat-demo:locale',
   location: 'chat-demo:location',
   themePreference: 'chat-demo:theme-preference',
@@ -29,6 +30,9 @@ const KEYS = {
   search: 'chat-demo:search',
   siderCollapsed: 'chat-demo:sider-collapsed',
 } as const
+
+/** 旧版本把 API Key 存在本地；改用 BFF 的 Cookie 会话后清掉残留。 */
+const LEGACY_API_KEY = 'chat-demo:api-key'
 
 const read = (key: string) => {
   try {
@@ -88,7 +92,7 @@ const initialThemePreference = (): ThemePreference => {
 const initialTtsVoice = (): TtsVoice => (read(KEYS.ttsVoice) === 'tide' ? 'tide' : 'stella')
 
 export const useSettings = create<Settings>(() => ({
-  apiKey: read(KEYS.apiKey),
+  model: read(KEYS.model),
   locale: initialLocale(),
   location: initialLocation(),
   themePreference: initialThemePreference(),
@@ -97,6 +101,14 @@ export const useSettings = create<Settings>(() => ({
   search: read(KEYS.search) === 'true',
   siderCollapsed: read(KEYS.siderCollapsed) === 'true',
 }))
+
+// 清掉旧版本残留的 API Key，避免明文继续留在浏览器里
+write(LEGACY_API_KEY, null)
+
+export const setModel = (model: string | null) => {
+  write(KEYS.model, model)
+  useSettings.setState({ model })
+}
 
 export const setLocale = (locale: Locale) => {
   write(KEYS.locale, locale)
@@ -117,11 +129,6 @@ export const setThemePreference = (themePreference: ThemePreference) => {
 export const setTtsVoice = (ttsVoice: TtsVoice) => {
   write(KEYS.ttsVoice, ttsVoice)
   useSettings.setState({ ttsVoice })
-}
-
-export const setApiKey = (apiKey: string | null) => {
-  write(KEYS.apiKey, apiKey)
-  useSettings.setState({ apiKey })
 }
 
 export const setThinking = (thinking: boolean) => {

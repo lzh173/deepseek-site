@@ -1,0 +1,75 @@
+.gate {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  min-height: 100vh;
+  padding: 24px;
+  background-color: var(--dsw-alias-bg-base);
+  color: var(--dsw-alias-label-primary);
+}
+
+.panel {
+  box-sizing: border-box;
+  width: 440px;
+  max-width: 100%;
+  padding: 26px 28px 24px;
+  border: 1px solid var(--dsw-alias-border-l1);
+  border-radius: 20px;
+  background-color: var(--dsw-alias-bg-layer-2);
+  box-shadow: var(--dsw-shadow-lv3);
+}
+
+.brand {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  margin-bottom: 16px;
+}
+
+.brandName {
+  font-size: 20px;
+  line-height: 24px;
+  font-weight: 600;
+  color: var(--dsw-alias-brand-primary);
+}
+
+.brandTag {
+  font-size: 12px;
+  line-height: 18px;
+  color: var(--dsw-alias-label-tertiary);
+}
+
+.title {
+  margin: 0 0 8px;
+  font-size: 16px;
+  line-height: 24px;
+  font-weight: 500;
+}
+
+.description {
+  margin: 0 0 16px;
+  font-size: 13px;
+  line-height: 20px;
+  color: var(--dsw-alias-label-secondary);
+}
+
+.account {
+  margin: 0 0 16px;
+  font-family: var(--ds-font-family-code);
+  font-size: 12px;
+  line-height: 18px;
+  color: var(--dsw-alias-label-tertiary);
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.checking {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}

@@ -9,12 +9,16 @@ import type {
   MessageStreamEvent,
 } from './types.js'
 
-/** 构建期 API 地址，默认 https://api.deepseek.com；本地开发支持开发服务器代理 */
+/**
+ * 接口地址前缀，默认为空串即同源（BFF）；构建期可用 rspack 的 apiOrigin 覆盖，
+ * 开发时由 devServer 把 /api 代理到 BFF。
+ */
 export const API_ORIGIN = __API_ORIGIN__
-/** Anthropic 兼容接口的前缀 */
-const ANTHROPIC_BASE_URL = `${API_ORIGIN}/anthropic/v1`
-/** 引用 Files API 上传的图片、调用 Anthropic 兼容 Files API 时必须携带 */
-const FILES_BETA = 'files-api-2025-04-14'
+/** BFF 的 API 前缀：/api/chat、/api/files 都在这里 */
+const ANTHROPIC_BASE_URL = `${API_ORIGIN}/api`
+
+/** 拼接 BFF 的相对路径；构建期配置了 apiOrigin 时同样成立 */
+export const apiUrl = (path: string) => `${ANTHROPIC_BASE_URL}${path}`
 
 export type ApiErrorKind =
   /** 非 2xx 响应 */
@@ -66,10 +70,11 @@ const readErrorResponse = async (
   return new ApiError(kind, message, response.status)
 }
 
+/** 所有请求都带上会话 Cookie；同源与跨域（配置了 apiOrigin 时）都需要显式声明。 */
 export const request = async (url: string, init: RequestInit): Promise<Response> => {
   let response: Response
   try {
-    response = await fetch(url, init)
+    response = await fetch(url, { credentials: 'include', ...init })
   } catch (error) {
     if (init.signal?.aborted) {
       throw error
@@ -82,28 +87,60 @@ export const request = async (url: string, init: RequestInit): Promise<Response>
   return response
 }
 
-const anthropicHeaders = (apiKey: string, beta: boolean): Record<string, string> => ({
-  // DeepSeek 兼容接口的鉴权方式，也可使用 Authorization: Bearer。
-  'x-api-key': apiKey,
-  // Files API 和通过 file_id 引用图片时必传；纯文本聊天无需携带。
-  ...(beta ? { 'anthropic-beta': FILES_BETA } : {}),
-})
+/** 当前登录用户；字段与 BFF 的 SessionUser 一致 */
+export type AuthUser = {
+  id: string
+  username: string
+  role: 'admin' | 'user'
+  /** 每日请求配额，服务端未返回时缺省 */
+  dailyQuota?: number
+}
 
-/** 用 GET /models 校验 API Key（不产生费用） */
-export const verifyApiKey = async (apiKey: string, signal?: AbortSignal): Promise<void> => {
-  await request(`${API_ORIGIN}/models`, {
+type MeResponse = { ray?: string; user?: AuthUser | null }
+
+/** GET /api/me：未登录返回 null（不报错），用于启动时判断是否需要登录 */
+export const fetchMe = async (signal?: AbortSignal): Promise<AuthUser | null> => {
+  const response = await request(apiUrl('/me'), {
     method: 'GET',
-    headers: { Authorization: `Bearer ${apiKey}` },
+    headers: { Accept: 'application/json' },
     signal,
+  })
+  const body = (await response.json()) as MeResponse
+  return body.user ?? null
+}
+
+/** POST /api/auth/login：成功后服务端下发 HttpOnly Cookie，这里返回当前用户 */
+export const login = async (
+  username: string,
+  password: string,
+  signal?: AbortSignal
+): Promise<AuthUser> => {
+  const response = await request(apiUrl('/auth/login'), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+    body: JSON.stringify({ username, password }),
+    signal,
+  })
+  const body = (await response.json()) as MeResponse
+  if (!body.user) {
+    throw new ApiError('protocol', '')
+  }
+  return body.user
+}
+
+/** POST /api/auth/logout：服务端清除会话 Cookie */
+export const logout = async (): Promise<void> => {
+  await request(apiUrl('/auth/logout'), {
+    method: 'POST',
+    headers: { Accept: 'application/json' },
   })
 }
 
 /**
- * POST /anthropic/v1/files 上传附件（不设过期时间，会话里的历史附件一直可用）。
+ * POST /api/files 上传附件（不设过期时间，会话里的历史附件一直可用）。
  * purpose 为 null 时不传该字段（图片）；purpose 必须排在 file 之前。
  */
 export const uploadFile = async (
-  apiKey: string,
   file: File,
   purpose: FilePurpose | null,
   signal?: AbortSignal
@@ -113,43 +150,41 @@ export const uploadFile = async (
     form.append('purpose', purpose)
   }
   form.append('file', file)
-  const response = await request(`${ANTHROPIC_BASE_URL}/files`, {
+  const response = await request(apiUrl('/files'), {
     method: 'POST',
-    headers: anthropicHeaders(apiKey, true),
     body: form,
     signal,
   })
   return (await response.json()) as FileObject
 }
 
-/** DELETE /anthropic/v1/files/{file_id} */
-export const deleteFile = async (apiKey: string, fileId: string): Promise<void> => {
-  await request(`${ANTHROPIC_BASE_URL}/files/${encodeURIComponent(fileId)}`, {
+/** DELETE /api/files/{file_id} */
+export const deleteFile = async (fileId: string): Promise<void> => {
+  await request(apiUrl(`/files/${encodeURIComponent(fileId)}`), {
     method: 'DELETE',
-    headers: anthropicHeaders(apiKey, true),
   })
 }
 
-const hasFile = (body: CreateMessageRequest) =>
-  body.messages.some(
-    (message) =>
-      typeof message.content !== 'string' &&
-      message.content.some((block) => block.type === 'image' || block.type === 'document')
-  )
+/** GET /api/files/{file_id}：取回原件（缩略图与补传用） */
+export const downloadFile = async (fileId: string, signal?: AbortSignal): Promise<Blob> => {
+  const response = await request(apiUrl(`/files/${encodeURIComponent(fileId)}`), {
+    method: 'GET',
+    signal,
+  })
+  return response.blob()
+}
 
 /**
- * POST /anthropic/v1/messages（stream: true），逐个产出流式事件，收到 message_stop 时结束。
+ * POST /api/chat（stream: true），逐个产出流式事件，收到 message_stop 时结束。
  * ping、保活注释与无法解析的内容不产出；中止请求时抛出 signal 的 AbortError。
  */
 export async function* streamMessage(
-  apiKey: string,
   body: CreateMessageRequest,
   signal: AbortSignal
 ): AsyncGenerator<MessageStreamEvent> {
-  const response = await request(`${ANTHROPIC_BASE_URL}/messages`, {
+  const response = await request(apiUrl('/chat'), {
     method: 'POST',
     headers: {
-      ...anthropicHeaders(apiKey, hasFile(body)),
       'Content-Type': 'application/json',
       Accept: 'text/event-stream',
     },

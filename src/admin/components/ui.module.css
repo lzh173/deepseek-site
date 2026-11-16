@@ -1,0 +1,181 @@
+/*
+ * 管理端共享的排版与图形小件。
+ * 只允许使用 theme.css 里的变量，亮/暗色由变量自身切换，不写死颜色。
+ */
+
+.mono {
+  font-family: var(--ds-font-family-code);
+  font-size: 12px;
+  line-height: 18px;
+}
+
+.code {
+  display: inline-block;
+  max-width: 100%;
+  padding: 1px 6px;
+  border-radius: 6px;
+  overflow: hidden;
+  font-family: var(--ds-font-family-code);
+  font-size: 12px;
+  line-height: 18px;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  vertical-align: bottom;
+  color: var(--dsw-alias-label-secondary);
+  background-color: var(--dsw-alias-markdown-inline-code);
+}
+
+.muted {
+  color: var(--dsw-alias-label-tertiary);
+}
+
+.caption {
+  font-size: 12px;
+  line-height: 18px;
+  color: var(--dsw-alias-label-tertiary);
+}
+
+.error {
+  font-size: 12px;
+  line-height: 18px;
+  color: var(--dsw-alias-state-error-primary);
+}
+
+.warning {
+  font-size: 12px;
+  line-height: 18px;
+  color: var(--dsw-static-amber-600);
+
+  [data-ds-dark-theme] & {
+    color: var(--dsw-static-amber-400);
+  }
+}
+
+.strong {
+  font-weight: 500;
+}
+
+.nowrap {
+  white-space: nowrap;
+}
+
+.ellipsis {
+  display: block;
+  max-width: 100%;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.rowWrap {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  min-width: 0;
+}
+
+.rowEnd {
+  justify-content: flex-end;
+}
+
+.between {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-width: 0;
+}
+
+.stack {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+.spacer {
+  flex: 1;
+}
+
+/* 进度条 */
+.bar {
+  box-sizing: border-box;
+  width: 100%;
+  height: 6px;
+  overflow: hidden;
+  border-radius: 100px;
+  background-color: var(--dsw-alias-interactive-bg-hover);
+}
+
+.barFill {
+  height: 100%;
+  border-radius: 100px;
+  background-color: var(--dsw-alias-brand-primary);
+  transition: width var(--ds-transition-duration-slow) var(--ds-ease-in-out);
+}
+
+.barFill[data-tone='success'] {
+  background-color: var(--dsw-static-green-500);
+}
+
+.barFill[data-tone='warning'] {
+  background-color: var(--dsw-static-amber-400);
+}
+
+.barFill[data-tone='danger'] {
+  background-color: var(--dsw-alias-state-error-primary);
+}
+
+.barFill[data-tone='muted'] {
+  background-color: var(--dsw-alias-label-dimmed);
+}
+
+/* 状态圆点：颜色跟 tone 走 */
+.dot {
+  display: inline-block;
+  flex-shrink: 0;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background-color: var(--dsw-alias-label-dimmed);
+}
+
+.dot[data-tone='success'] {
+  background-color: var(--dsw-static-green-500);
+}
+
+.dot[data-tone='warning'] {
+  background-color: var(--dsw-static-amber-400);
+}
+
+.dot[data-tone='danger'] {
+  background-color: var(--dsw-alias-state-error-primary);
+}
+
+/* 表单/弹窗内的按钮行 */
+.dialogActions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.sectionTitle {
+  margin: 0;
+  font-size: 14px;
+  line-height: 22px;
+  font-weight: 500;
+  color: var(--dsw-alias-label-primary);
+}
+
+.divider {
+  height: 1px;
+  background-color: var(--dsw-alias-border-l1);
+}

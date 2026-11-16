@@ -1,7 +1,10 @@
 import cookie from '@fastify/cookie'
 import helmet from '@fastify/helmet'
 import multipart from '@fastify/multipart'
+import fastifyStatic from '@fastify/static'
 import Fastify, { type FastifyInstance } from 'fastify'
+import fs from 'node:fs'
+import path from 'node:path'
 import { openDb } from './db/index.ts'
 import { seedAdmin, seedUpstream } from './db/seed.ts'
 import { env } from './env.ts'
@@ -56,6 +59,19 @@ export const buildApp = async (): Promise<FastifyInstance> => {
   )
 
   startJobs(app)
+
+  // 可选：把前端构建产物（dist）一起托管，便于单容器部署。
+  // 未配置 RAY_WEB_DIR 或目录不存在时跳过，静态资源交给前置的 Caddy / Cloudflare。
+  const webDir = env.RAY_WEB_DIR ? path.resolve(env.RAY_WEB_DIR) : ''
+  if (webDir && fs.existsSync(webDir)) {
+    await app.register(fastifyStatic, {
+      root: webDir,
+      prefix: '/',
+      index: ['index.html'],
+      wildcard: false,
+    })
+    app.log.info(`[ray] serving static site from ${webDir}`)
+  }
 
   return app
 }

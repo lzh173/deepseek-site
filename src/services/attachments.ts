@@ -3,6 +3,7 @@ import type { LinkedMessage, TranslationMessage } from '../i18n/index.js'
 import { uploadFile } from './api/client.js'
 import { classifyApiError, getUploadErrorInfo, isRetryableApiError } from './api/errors.js'
 import type { FilePurpose } from './api/types.js'
+import { registerFileId } from './chat/db.js'
 import { ACCEPT_FILE_EXTS } from './uploadExts.js'
 
 /** 允许上传的扩展名，按扩展名白名单过滤，清单见 uploadExts.ts */
@@ -118,7 +119,6 @@ const next = () => {
 
 /** 排队上传，最多同时上传 MAX_CONCURRENT 个；排队期间中止的任务不会发出请求 */
 const enqueueUpload = (
-  apiKey: string,
   file: Blob,
   name: string,
   isImage: boolean,
@@ -132,7 +132,7 @@ const enqueueUpload = (
       }
       try {
         const body = file instanceof File ? file : new File([file], name, { type: file.type })
-        resolve((await uploadFile(apiKey, body, getUploadPurpose(name, isImage), signal)).id)
+        resolve((await uploadFile(body, getUploadPurpose(name, isImage), signal)).id)
       } catch (error) {
         reject(error)
       }
@@ -165,7 +165,6 @@ const pending = new Map<string, { promise: Promise<string>; controller: AbortCon
 
 /** 开始（或复用进行中的）上传，返回服务端 file_id；失败时任务记为 error 并抛出原错误 */
 export const uploadAttachment = (
-  apiKey: string,
   id: string,
   blob: Blob,
   name: string,
@@ -177,8 +176,10 @@ export const uploadAttachment = (
   }
   const controller = new AbortController()
   setTask(id, { status: 'uploading' })
-  const promise = enqueueUpload(apiKey, blob, name, isImage, controller.signal)
+  const promise = enqueueUpload(blob, name, isImage, controller.signal)
     .then((serverId) => {
+      // 登记「附件本地 id → 服务端 file_id」，会话落盘与缩略图都复用它
+      registerFileId(id, serverId)
       setTask(id, { status: 'done', serverId })
       return serverId
     })

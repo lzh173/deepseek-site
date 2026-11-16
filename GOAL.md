@@ -1,11 +1,12 @@
 # GOAL.md — Ray：DeepSeek 风格的多渠道聊天服务
 
-> 版本 v1.4 · 2026-11-16 · 状态：**已开工**
+> 版本 v1.5 · 2026-11-16 · 状态：**已开工**
 >
 > v1.1 变更：① 明确仓库工作流（原 demo 只读参考）；② 付费白名单粒度改为**模型级**；③ `ray` 出现在**所有**错误信息中；④ 补充总体代码结构；⑤ 技术栈微调。
 > v1.2 变更：① 路由与鉴权落到 **Key ⇄ 模型多对多**；② 公开模型不划分档位；③ 外层由 Cloudflare Access 承接；④ 可移植性列为硬要求；⑤ 工具链验证通过、构建脚本跨平台化。
 > v1.3 变更：**白名单最终定为「Key × 模型」，两列均必填**；授权集合是故障转移的硬边界（越界即 403，集合内耗尽即 503）。
-> v1.4 变更（实现阶段）：① 弃用 Drizzle，改**手写 SQL 迁移**（`db/migrations/*.sql` + 极简迁移器，零代码生成）；② 弃用 tsx，服务端直接 `node --experimental-strip-types`（少一层构建，与前端零新增依赖的原则一致）；③ `better-sqlite3` 在本机需 MSVC 从源码编译，Docker 镜像需带 `build-essential`/`python3`。
+> v1.4 变更（实现阶段）：① 弃用 Drizzle，改**手写 SQL 迁移**（`db/migrations/*.sql` + 极简迁移器，零代码生成）；② 弃用 tsx，服务端直接 `node --experimental-strip-types`；③ `better-sqlite3` 需 MSVC 从源码编译。
+> v1.5 变更（阻塞修复）：**数据库从 `better-sqlite3` 换成 Node 内置 `node:sqlite`**。实测 Node 24 + ESM 下，better-sqlite3 的 Statement 终结器会在 GC 时触发 `RemoveEnvironmentCleanupHook (env) != nullptr` 的 native abort（已最小复现，换 `node:sqlite` 后同一场景稳定通过）。连带影响：**运行时要求 Node ≥ 24**（`node:sqlite` 在 23.4 前需 flag），镜像不再需要编译工具链，体积更小、可移植性更好。
 >
 > 本文是唯一目标文档。实现以本文为准；与本文冲突的临时想法一律作废。
 

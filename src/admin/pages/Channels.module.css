@@ -1,0 +1,34 @@
+.table table {
+  min-width: 1180px;
+}
+
+.nameCell {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  min-width: 0;
+}
+
+.nameCell > span:first-child {
+  max-width: 100%;
+  font-weight: 500;
+}
+
+.probeTag {
+  display: inline-block;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  vertical-align: bottom;
+}
+
+.dialog {
+  width: 620px;
+  max-height: calc(100vh - 64px);
+}
+
+.dialogMain {
+  min-height: 0;
+  overflow-y: auto;
+}

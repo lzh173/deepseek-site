@@ -1,10 +1,7 @@
 # Ray BFF 生产镜像
-# better-sqlite3 在没有预编译包的平台上需要从源码编译，因此保留构建工具链。
-FROM node:22-bookworm-slim
-
-RUN apt-get update \
-  && apt-get install -y --no-install-recommends python3 make g++ ca-certificates \
-  && rm -rf /var/lib/apt/lists/*
+# 数据库用 Node 内置的 node:sqlite（Node >= 23.4 无需 flag），
+# 因此镜像不需要编译工具链，也不需要原生扩展。
+FROM node:24-bookworm-slim
 
 WORKDIR /app
 
@@ -28,7 +25,7 @@ ENV NODE_ENV=production \
 EXPOSE 3000
 VOLUME ["/data"]
 
-HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
+HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
   CMD node -e "fetch('http://127.0.0.1:'+(process.env.RAY_PORT||3000)+'/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
 
 CMD ["node", "--env-file-if-exists=.env", "--experimental-strip-types", "src/index.ts"]

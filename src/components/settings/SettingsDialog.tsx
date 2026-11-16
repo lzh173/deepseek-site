@@ -1,5 +1,5 @@
 import clsx from 'clsx'
-import { useRef, useState, type ReactNode } from 'react'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
 import {
   IconDarkOutline16,
   IconDataOutline16,
@@ -15,29 +15,30 @@ import {
   exportHistory,
   importHistory,
 } from '../../services/chat/backup.js'
-import { useIsMobile } from '../../app/viewport.js'
 import { useChatStore } from '../../services/chat/store.js'
 import { regionCodes, getRegionName, provinces } from '../../services/location.js'
 import {
   isChineseBrowser,
   setLocale,
   setLocation,
+  setModel,
   setThemePreference,
   setTtsVoice,
   useSettings,
   type ThemePreference,
 } from '../../services/settings.js'
 import { useTranslate, type TranslationKey, type TranslationMessage } from '../../i18n/index.js'
+import { signOut, useAuth } from '../../services/auth.js'
+import { loadModels, useCurrentModel, useModels } from '../../services/models.js'
 import { Button } from '../base/Button.js'
 import { Modal } from '../base/Modal.js'
 import { Select } from '../base/Select.js'
 import { showToast } from '../base/toastState.js'
-import { ApiKeyConfirm, ApiKeyField, useApiKeyEditor } from './ApiKeyField.js'
 import { closeSettings, useSettingsDialog, type SettingsSection } from './settingsDialogState.js'
 import styles from './Settings.module.css'
 
 /**
- * 设置弹窗：分「通用设置」（主题、语言、朗读音色、位置）与「数据管理」（API Key、导入、导出、删除）。
+ * 设置弹窗：分「通用设置」（模型、主题、语言、朗读音色、位置）与「数据管理」（当前账号、导入、导出、删除）。
  * 桌面端为居中弹窗、左侧导航；移动端为底部弹层、导航横排在内容上方
  */
 export const SettingsDialog = () => {
@@ -56,11 +57,8 @@ const sections: { value: SettingsSection; label: TranslationKey; icon: ReactNode
 
 const SettingsContent = () => {
   const t = useTranslate()
-  const isMobile = useIsMobile()
   // 打开时按调用方指定的分组选中，之后在弹窗内切换
   const [section, setSection] = useState(() => useSettingsDialog.getState().section)
-  // 切换分组不丢失正在输入的 API Key 与导入状态
-  const apiKeyEditor = useApiKeyEditor()
   const historyImport = useHistoryImport()
   const historyDelete = useHistoryDelete()
   const replacingHistory = useChatStore((state) => state.importingHistory)
@@ -96,6 +94,7 @@ const SettingsContent = () => {
         <div role="tabpanel" className={styles.content}>
           {section === 'general' ? (
             <>
+              <ModelSetting />
               <ThemeSetting />
               <LocaleSetting />
               <TtsVoiceSetting />
@@ -103,7 +102,7 @@ const SettingsContent = () => {
             </>
           ) : (
             <>
-              <ApiKeyField editor={apiKeyEditor} />
+              <AccountSetting />
               <ImportHistory historyImport={historyImport} disabled={historyBusy} />
               <ExportHistory disabled={historyBusy} />
               <SettingCell
@@ -121,7 +120,6 @@ const SettingsContent = () => {
                   </Button>
                 }
               />
-              {isMobile ? <ApiKeyConfirm editor={apiKeyEditor} /> : null}
             </>
           )}
         </div>
@@ -203,6 +201,86 @@ const useHistoryDelete = () => {
     },
     confirm,
   }
+}
+
+/**
+ * 模型：从 GET /api/models 渲染下拉（服务端已按角色与白名单过滤）。
+ * 能力位为 false 的开关在输入框里隐藏，见 ChatInput。
+ */
+const ModelSetting = () => {
+  const t = useTranslate()
+  const models = useModels((state) => state.models)
+  const loading = useModels((state) => state.status === 'loading')
+  const current = useCurrentModel()
+  useEffect(() => {
+    void loadModels()
+  }, [])
+  const description =
+    models.length === 0
+      ? t(loading ? 'settingsModelLoading' : 'settingsModelEmpty')
+      : current && !current.available
+        ? t('settingsModelUnavailable')
+        : undefined
+  return (
+    <SettingCell
+      label={t('settingsModel')}
+      description={description}
+      status={null}
+      action={
+        models.length === 0 ? null : (
+          <Select
+            ariaLabel={t('settingsModel')}
+            value={current?.id ?? ''}
+            options={models.map((item) => ({ value: item.id, label: item.display_name }))}
+            onChange={setModel}
+          />
+        )
+      }
+    />
+  )
+}
+
+/** 当前账号：登录态由 BFF 的 Cookie 维护，这里只展示用户名与角色，并提供退出登录 */
+const AccountSetting = () => {
+  const t = useTranslate()
+  const user = useAuth((state) => state.user)
+  const [busy, setBusy] = useState(false)
+  const [failed, setFailed] = useState(false)
+
+  const logout = async () => {
+    if (busy) {
+      return
+    }
+    setBusy(true)
+    setFailed(false)
+    try {
+      // 成功后整页刷新，登录卡片会重新出现，因此不必恢复 busy
+      await signOut()
+    } catch {
+      setFailed(true)
+      setBusy(false)
+    }
+  }
+
+  const role = user?.role === 'admin' ? t('accountRoleAdmin') : t('accountRoleUser')
+  return (
+    <SettingCell
+      label={t('account')}
+      description={user ? t('accountUserLine', { name: user.username, role }) : t('loginRequired')}
+      status={failed ? { key: 'logoutFailed', error: true } : null}
+      action={
+        <Button
+          variant="outlined"
+          size="m"
+          className={styles.cellButton}
+          disabled={busy}
+          onClick={() => void logout()}
+        >
+          {t(busy ? 'loggingOut' : 'logout')}
+        </Button>
+      }
+    />
+  )
 }
 
 const LocationSetting = () => {

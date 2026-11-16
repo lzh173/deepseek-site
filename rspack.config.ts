@@ -27,7 +27,8 @@ type ConfigOptions = {
 
 /** 创建构建配置，支持自定义 API 地址和开发服务器选项 */
 export const createConfig = ({
-  apiOrigin = 'https://api.deepseek.com',
+  // 默认同源：浏览器只请求 /api/*，由 BFF（或 devServer 代理）承接
+  apiOrigin = '',
   devServer,
 }: ConfigOptions = {}): Configuration => ({
   mode: dev ? 'development' : 'production',
@@ -88,7 +89,19 @@ export const createConfig = ({
     }),
   ],
   performance: { hints: false },
-  devServer: { port: 8090, ...devServer },
+  devServer: {
+    port: 8090,
+    // rspack 2 的 devServer.proxy 是 http-proxy-middleware 的数组格式（webpack-dev-server 5 同款），
+    // 不是 v4 的对象写法；/api 全部转发到本地 BFF，Cookie 与 SSE 都走同源。
+    proxy: [
+      {
+        context: ['/api'],
+        target: 'http://127.0.0.1:3000',
+        changeOrigin: true,
+      },
+    ],
+    ...devServer,
+  },
 })
 
 // eslint-disable-next-line import/no-default-export

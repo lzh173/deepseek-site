@@ -4,7 +4,8 @@
  * 声明 deepseek_web_search / deepseek_read_url 或设置 safety_check.level 为 high 时进入扩展模式。
  */
 
-export type ChatModel = 'deepseek-flash' | 'deepseek-v4-pro'
+/** 公开模型 id 由 BFF 决定（见 GET /api/models），前端只当作不透明的字符串 */
+export type ChatModel = string
 
 // ---------- 响应：内容块 ----------
 
@@ -126,8 +127,8 @@ export type ToolUseBlock = { type: 'tool_use'; id: string; name: string; input: 
 export type TextBlockParam = { type: 'text'; text: string }
 
 /**
- * 文件块：引用经 Files API 上传的文件，图片用 image、其余用 document；
- * 图片请求需带 anthropic-beta: files-api-2025-04-14；扩展模式不支持 document，返回 400。
+ * 文件块：引用经 /api/files 上传的文件，图片用 image、其余用 document；
+ * 鉴权走同源 Cookie，不再需要 anthropic-beta 头；扩展模式不支持 document，返回 400。
  */
 export type FileBlockParam = {
   type: 'image' | 'document'

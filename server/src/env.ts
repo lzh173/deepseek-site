@@ -23,6 +23,8 @@ const EnvSchema = z.object({
   RAY_UPSTREAM_BASE_URL: z.string().url().optional(),
   RAY_UPSTREAM_API_KEY: z.string().min(1).optional(),
   RAY_UPSTREAM_MODEL: z.string().min(1).optional(),
+  /** 可选的静态站点目录；存在时由 BFF 直接托管前端产物（dist） */
+  RAY_WEB_DIR: z.string().optional(),
 })
 
 export type Env = z.infer<typeof EnvSchema> & {

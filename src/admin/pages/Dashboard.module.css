@@ -1,0 +1,117 @@
+.stats {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.stat {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.statLabel {
+  font-size: 12px;
+  line-height: 18px;
+  color: var(--dsw-alias-label-tertiary);
+}
+
+.statValue {
+  font-size: 26px;
+  line-height: 34px;
+  font-weight: 600;
+  color: var(--dsw-alias-label-primary);
+}
+
+.statSub {
+  font-size: 12px;
+  line-height: 18px;
+  color: var(--dsw-alias-label-secondary);
+}
+
+/* Key 池按状态分段：活跃 / 冷却 / 停用 */
+.segments {
+  display: flex;
+  width: 100%;
+  height: 6px;
+  overflow: hidden;
+  border-radius: 100px;
+  background-color: var(--dsw-alias-interactive-bg-hover);
+}
+
+.segment {
+  height: 100%;
+  transition: width var(--ds-transition-duration-slow) var(--ds-ease-in-out);
+}
+
+.segment[data-tone='success'] {
+  background-color: var(--dsw-static-green-500);
+}
+
+.segment[data-tone='warning'] {
+  background-color: var(--dsw-static-amber-400);
+}
+
+.segment[data-tone='muted'] {
+  background-color: var(--dsw-alias-label-dimmed);
+}
+
+.columns {
+  display: grid;
+  grid-template-columns: minmax(0, 1.6fr) minmax(0, 1fr);
+  gap: 14px;
+  align-items: start;
+}
+
+.errorsCard {
+  min-width: 0;
+}
+
+.channelList {
+  display: flex;
+  flex-direction: column;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.channelRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  padding: 7px 0;
+  border-bottom: 1px solid var(--dsw-alias-border-l1);
+}
+
+.channelRow:last-child {
+  border-bottom: none;
+}
+
+.channelName {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  font-size: 13px;
+  line-height: 20px;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  color: var(--dsw-alias-label-primary);
+}
+
+.channelKeys {
+  flex-shrink: 0;
+  font-size: 12px;
+  line-height: 18px;
+  color: var(--dsw-alias-label-tertiary);
+}
+
+@media (max-width: 1180px) {
+  .stats {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .columns {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
