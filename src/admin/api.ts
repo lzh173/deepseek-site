@@ -239,6 +239,10 @@ export type ProbeResult = {
   ok: boolean
   status: number | null
   latency_ms: number
+  /** 响应是合法模型列表时的模型数量 */
+  model_count?: number
+  /** 面向人的修复建议 */
+  hint?: string
   error?: string
 }
 

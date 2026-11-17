@@ -160,7 +160,10 @@ export const copy = {
     test: '测试',
     testing: '测试中…',
     probeOk: (latency: number, status: number) => `${latency} ms · HTTP ${status}`,
+    probeOkModels: (latency: number, status: number, count: number) =>
+      `${latency} ms · HTTP ${status} · ${count} 个模型`,
     probeFailed: (latency: number) => `失败 · ${latency} ms`,
+    probeHint: (hint: string) => `建议：${hint}`,
     probeError: (message: string) => `失败：${message}`,
     empty: '还没有渠道',
     emptyHint: '渠道是上游服务的接入点，先建一个渠道再到「账号池」导入 Key。',

@@ -15,7 +15,11 @@ import { nowIso } from '../../lib/time.ts'
  */
 
 /** 探活超时 5 秒，与 GOAL.md §7.4 的主动健康检查同一口径。 */
-const PROBE_TIMEOUT_MS = 5_000
+/**
+ * 探活超时。官方接口冷启动实测要 3 秒以上，5 秒会误判成失败，
+ * 这里放宽到 15 秒（探活是人工点击触发的，慢一点没关系）。
+ */
+const PROBE_TIMEOUT_MS = 15_000
 
 /** 探活结果。失败不是异常，而是这个结构的一部分。 */
 export type ProbeResult = {
@@ -23,6 +27,10 @@ export type ProbeResult = {
   /** 上游 HTTP 状态码；连不上或超时时为 null。 */
   status: number | null
   latency_ms: number
+  /** 响应是合法模型列表时，模型数量 */
+  model_count?: number
+  /** 面向人的修复建议（缩进、缺少 /v1、鉴权失败……） */
+  hint?: string
   error?: string
 }
 
@@ -38,33 +46,108 @@ const describeProbeError = (error: unknown): string => {
 }
 
 /**
+ * 探活最多读这么多响应体。OpenRouter 的 /models 就有 780KB，
+ * 上限设小会把合法 JSON 截断成「不是合法 JSON」——这类误判比多读几 MB 更糟。
+ */
+const PROBE_MAX_BODY = 8 * 1024 * 1024
+
+/**
  * GET {base_url}/models 探活；keys.ts 的单 Key 测试复用同一实现，故导出。
- * secret 为 null 时不带鉴权头（ollama 这类本地渠道）。
+ *
+ * 不只检查状态码：很多站点对任意路径都回 200 的 HTML 页，
+ * 只status 判断会把「base_url 少了 /v1」这种最常见配置错误当成成功。
+ * 这里要求响应确实是 JSON 且带 data 数组，否则给出具体提示。
  */
 export const probeModels = async (baseUrl: string, secret: string | null): Promise<ProbeResult> => {
-  const url = `${baseUrl.replace(/\/+$/, '')}/models`
+  const base = baseUrl.replace(/\/+$/, '')
+  const url = `${base}/models`
   const started = Date.now()
+  const fail = (error: string, hint?: string, status: number | null = null): ProbeResult => ({
+    ok: false,
+    status,
+    latency_ms: Date.now() - started,
+    ...(hint === undefined ? {} : { hint }),
+    error,
+  })
+
   try {
     const response = await request(url, {
       method: 'GET',
       headers: secret ? { authorization: `Bearer ${secret}` } : {},
       signal: AbortSignal.timeout(PROBE_TIMEOUT_MS),
     })
-    // 不读完响应体，连接不会归还连接池；这里只关心状态码，读完丢掉
-    await response.body.dump()
+    const contentType = String(response.headers['content-type'] ?? '')
+    const raw = await response.body.text()
+    const body = raw.length > PROBE_MAX_BODY ? raw.slice(0, PROBE_MAX_BODY) : raw
+    const status = response.statusCode
+    const latency = Date.now() - started
+
+    // 鉴权类失败：key 错、没权限、余额不足
+    if (status === 401 || status === 403) {
+      return {
+        ...fail(`上游拒绝鉴权（HTTP ${status}）`, `检查 API Key 是否正确、是否有该渠道权限`, status),
+        latency_ms: latency,
+      }
+    }
+    if (status === 404) {
+      return {
+        ...fail(`端点不存在（HTTP 404）`, `base_url 可能少了 /v1 之类的路径前缀，或该服务不提供 /models`, status),
+        latency_ms: latency,
+      }
+    }
+    if (status < 200 || status >= 300) {
+      return {
+        ...fail(`上游返回 HTTP ${status}`, '查看上游返回的正文确认原因', status),
+        latency_ms: latency,
+      }
+    }
+
+    // 200 但返回 HTML：最常见的「地址写错」
+    if (contentType.includes('text/html') || /^\s*<(!doctype|html)/i.test(body)) {
+      return {
+        ...fail(
+          '返回的是 HTML 页面，不是 API 响应',
+          `base_url 看起来是站点首页。多数 OpenAI 兼容服务要写成 ${base}/v1（DeepSeek 官方除外，它不带 /v1）`,
+          status
+        ),
+        latency_ms: latency,
+      }
+    }
+
+    let parsed: unknown
+    try {
+      parsed = JSON.parse(body)
+    } catch {
+      return {
+        ...fail('响应不是合法 JSON', '确认 base_url 指向的是 OpenAI 兼容接口', status),
+        latency_ms: latency,
+      }
+    }
+
+    const data = (parsed as { data?: unknown }).data
+    if (!Array.isArray(data)) {
+      return {
+        ...fail(
+          'JSON 里没有 data 数组，不像模型列表',
+          '确认 base_url 指向的是 OpenAI 兼容接口根路径（通常以 /v1 结尾）',
+          status
+        ),
+        latency_ms: latency,
+      }
+    }
+
     return {
-      ok: response.statusCode >= 200 && response.statusCode < 300,
-      status: response.statusCode,
-      latency_ms: Date.now() - started,
+      ok: true,
+      status,
+      latency_ms: latency,
+      model_count: data.length,
+      ...(data.length === 0
+        ? { hint: '接口可达，但模型列表为空：确认这把 Key 是否已开通模型' }
+        : {}),
     }
   } catch (error) {
     // 探活失败本就是预期结果之一：转成结构化返回值给前端展示，不是吞异常
-    return {
-      ok: false,
-      status: null,
-      latency_ms: Date.now() - started,
-      error: describeProbeError(error),
-    }
+    return fail(describeProbeError(error), '检查 base_url 是否可达、是否需要代理')
   }
 }
 

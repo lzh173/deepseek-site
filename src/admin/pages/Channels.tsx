@@ -99,7 +99,7 @@ const validate = (draft: Draft): DraftErrors => {
   return errors
 }
 
-/** 探活结果：成功显示延迟与状态码，失败显示原因 */
+/** 探活结果：成功显示延迟与模型数，失败显示原因与修复建议 */
 const ProbeCell = ({ probe, testing }: { probe?: ProbeResult; testing: boolean }) => {
   if (testing) {
     return <Tag tone="neutral">{copy.channels.testing}</Tag>
@@ -108,13 +108,22 @@ const ProbeCell = ({ probe, testing }: { probe?: ProbeResult; testing: boolean }
     return <span className={ui.muted}>{copy.common.none}</span>
   }
   if (probe.ok) {
-    return <Tag tone="success">{copy.channels.probeOk(probe.latency_ms, probe.status ?? 0)}</Tag>
+    return (
+      <Tag
+        tone="success"
+        title={probe.hint ?? ''}
+        className={styles.probeTag}
+      >
+        {probe.model_count === undefined
+          ? copy.channels.probeOk(probe.latency_ms, probe.status ?? 0)
+          : copy.channels.probeOkModels(probe.latency_ms, probe.status ?? 0, probe.model_count)}
+      </Tag>
+    )
   }
+  const detail = probe.hint ? `${probe.error ?? ''}\n→ ${probe.hint}` : (probe.error ?? '')
   return (
-    <Tag tone="danger" className={styles.probeTag} title={probe.error ?? ''}>
-      {probe.error
-        ? copy.channels.probeError(probe.error)
-        : copy.channels.probeFailed(probe.latency_ms)}
+    <Tag tone="danger" className={styles.probeTag} title={detail}>
+      {probe.error ? copy.channels.probeError(probe.error) : copy.channels.probeFailed(probe.latency_ms)}
     </Tag>
   )
 }

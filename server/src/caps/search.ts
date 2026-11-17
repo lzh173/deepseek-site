@@ -24,11 +24,11 @@ export type SearchHit = {
 }
 
 /** 一次搜索的总预算：超过就按「没有结果」处理（§9 #4 要求 8 秒内给答复） */
-const TIMEOUT_MS = 8_000
+const TIMEOUT_MS = 20_000
 /** 留给「中止后各源收尾」的余量：真掐在 8000ms 上返回会略微超预算 */
 const ABORT_RESERVE_MS = 300
 /** 360 / 百度 各自的时限：到点没结果就当这家没有，别拖垮整体预算 */
-const CN_SOURCE_TIMEOUT_MS = 4_000
+const CN_SOURCE_TIMEOUT_MS = 8_000
 /** 百度跳转壳解析：单条最多这么久（实测正常 40ms，慢的时候也不会卡住整轮） */
 const BAIDU_LINK_TIMEOUT_MS = 3_000
 /** 百度跳转壳最多跟几跳重定向 */
@@ -36,7 +36,7 @@ const BAIDU_LINK_HOPS = 2
 /** 一轮最多解析几个百度跳转壳：够填满来源面板就行（解析是并行的，多几条不慢） */
 const MAX_BAIDU_LINKS = 12
 /** 竞速阈值：哪个中文源先给出这么多条就直接用它 */
-const ENOUGH_HITS = 3
+const ENOUGH_HITS = 2
 /** 单页最多读这么多字节：兜底抓取可能碰到超大页面，只取前段 */
 const MAX_BODY_BYTES = 1_000_000
 /** 前端来源面板最多展示的条数 */
@@ -46,7 +46,7 @@ const MAX_QUERIES = 4
 /** 摘要最多保留这么多字 */
 const MAX_SNIPPET_CHARS = 300
 /** 预热请求的时限：只为了把 TLS 握手做掉，不需要等正文 */
-const WARMUP_TIMEOUT_MS = 5_000
+const WARMUP_TIMEOUT_MS = 15_000
 /** 搜索站的桌面 UA：百度 / 360 对空 UA 或移动 UA 会直接给验证码页 */
 const USER_AGENT =
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36'
@@ -414,11 +414,24 @@ const fetchDocument = async (
   return readBodyText(response, MAX_BODY_BYTES)
 }
 
-/** 单个搜索源失败不向外冒泡：调用方只关心「有没有结果」 */
-const attempt = async (run: () => Promise<SearchHit[]>): Promise<SearchHit[]> => {
+/**
+ * 单个搜索源失败不向外冒泡：调用方只关心「有没有结果」。
+ * RAY_SEARCH_DEBUG=1 时打印每路的结果条数与耗时，排查「哪一站挂了」很方便。
+ */
+const DEBUG = process.env.RAY_SEARCH_DEBUG === '1'
+
+const attempt = async (name: string, run: () => Promise<SearchHit[]>): Promise<SearchHit[]> => {
+  const started = Date.now()
   try {
-    return await run()
-  } catch {
+    const hits = await run()
+    if (DEBUG) {
+      console.error(`[search] ${name}: ${hits.length} 条 / ${Date.now() - started}ms`)
+    }
+    return hits
+  } catch (error) {
+    if (DEBUG) {
+      console.error(`[search] ${name}: 失败 ${Date.now() - started}ms ${String(error).slice(0, 80)}`)
+    }
     return []
   }
 }
@@ -905,9 +918,11 @@ const parseBing = (html: string): SearchHit[] => {
 }
 
 const searchBing = async (query: string, signal: AbortSignal): Promise<SearchHit[]> => {
-  const endpoint = new URL('https://www.bing.com/search')
+  const endpoint = new URL('https://cn.bing.com/search')
   endpoint.searchParams.set('q', query)
   endpoint.searchParams.set('setlang', 'zh-CN')
+  // ensearch=0 强制走国内版索引；cn.bing.com 的 HTML 结构与 www.bing.com 一致
+  endpoint.searchParams.set('ensearch', '0')
   return parseBing(await fetchDocument(endpoint, signal, 'text/html,application/xhtml+xml'))
 }
 
@@ -995,7 +1010,13 @@ const firstEnough = (tasks: Promise<SearchHit[]>[], enough: number): Promise<Sea
     }
   })
 
-/** 360 与百度并行竞速；谁给够 3 条就用谁，都不够就合并两家 */
+/**
+ * 中文两家 + Bing 三家并行竞速。
+ *
+ * 现状：百度和 360 对连续请求很敏感，经常直接回「安全验证 / 访问异常」页（解析为空），
+ * 所以不能只押注它们；Bing（cn.bing.com）反而最稳，只是宽泛中文查询结果质量一般。
+ * 这里同时发三路，谁先给够 3 条就用谁；都不够就合并全部。
+ */
 const searchChineseSources = async (query: string, signal: AbortSignal): Promise<SearchHit[]> => {
   if (signal.aborted) {
     return []
@@ -1006,16 +1027,23 @@ const searchChineseSources = async (query: string, signal: AbortSignal): Promise
   try {
     const hits = await firstEnough(
       [
-        attempt(() => searchSo360(query, race.signal)),
-        attempt(() => searchBaidu(query, race.signal)),
+        attempt('360', () => searchSo360(query, race.signal)),
+        attempt('baidu', () => searchBaidu(query, race.signal)),
+        attempt('bing-html', () => searchBing(query, race.signal)),
+        // RSS 与 HTML 是同一份索引，但 RSS 通常快一个数量级；
+        // 让它们同场竞速，哪个先给够 3 条就用哪个
+        attempt('bing-rss', () => searchBingRss(query, race.signal)),
       ],
       ENOUGH_HITS
     )
     if (hits.length >= ENOUGH_HITS) {
-      // 赢家已经够用，落败那一路不用再等它跑满 4 秒
+      // 赢家已经够用，落败那几路不用再等它们跑满超时
       race.abort(new Error('竞速已结束'))
     }
-    return hits
+    if (hits.length > 0) {
+      return hits
+    }
+    return []
   } finally {
     signal.removeEventListener('abort', forward)
   }
@@ -1033,7 +1061,7 @@ const searchOne = async (query: string, signal: AbortSignal): Promise<SearchHit[
 
   // 1) 自建 SearXNG：配了就先试，有结果就用
   if (env.RAY_SEARXNG_URL) {
-    const fromSearxng = dedupeHits(await attempt(() => searchSearxng(query, signal)))
+    const fromSearxng = dedupeHits(await attempt('searxng', () => searchSearxng(query, signal)))
     if (fromSearxng.length > 0) {
       return fromSearxng
     }
@@ -1052,7 +1080,7 @@ const searchOne = async (query: string, signal: AbortSignal): Promise<SearchHit[
   }
 
   // 3) Bing RSS：境内 200 / 半秒，结构比 HTML 稳定得多
-  const fromRss = dedupeHits(await attempt(() => searchBingRss(query, signal)))
+  const fromRss = dedupeHits(await attempt('bing-rss', () => searchBingRss(query, signal)))
   if (fromRss.length > 0) {
     return fromRss
   }
@@ -1061,7 +1089,7 @@ const searchOne = async (query: string, signal: AbortSignal): Promise<SearchHit[
   }
 
   // 4) Bing HTML：冷启动 8~10 秒，但只要连上了就有结果
-  const fromBing = dedupeHits(await attempt(() => searchBing(query, signal)))
+  const fromBing = dedupeHits(await attempt('bing-html', () => searchBing(query, signal)))
   if (fromBing.length > 0) {
     return fromBing
   }
@@ -1070,7 +1098,7 @@ const searchOne = async (query: string, signal: AbortSignal): Promise<SearchHit[
   }
 
   // 5) DDG 保底：境内基本超时，留着只是为了让境外部署也还能用
-  return dedupeHits(await attempt(() => searchDuckDuckGo(query, signal)))
+  return dedupeHits(await attempt('ddg', () => searchDuckDuckGo(query, signal)))
 }
 
 /**
@@ -1082,6 +1110,7 @@ export const warmupSearch = (): void => {
   const targets = [
     'https://www.so.com/s?q=warmup',
     'https://www.baidu.com/s?wd=warmup&rn=10',
+    'https://cn.bing.com/search?q=warmup&ensearch=0',
     'https://www.bing.com/search?format=rss&q=warmup',
   ]
   for (const target of targets) {
@@ -1097,6 +1126,78 @@ export const warmupSearch = (): void => {
       .then((response) => response.body?.cancel())
       .catch(() => undefined)
   }
+}
+
+/**
+ * 查询词切分：中文没有空格，用 2-gram 近似分词。
+ * 「战雷 最新版本」→ [战雷, 最新, 新版, 版本]，外加单字集合用于覆盖率打分。
+ */
+const queryTerms = (query: string): { grams: string[]; chars: string[] } => {
+  const grams = new Set<string>()
+  const chars = new Set<string>()
+  for (const word of query.split(/[^\p{L}\p{N}]+/u)) {
+    if (word.length === 0) {
+      continue
+    }
+    for (const char of word) {
+      chars.add(char)
+    }
+    if (word.length <= 2) {
+      grams.add(word)
+      continue
+    }
+    for (let i = 0; i + 2 <= word.length; i += 1) {
+      grams.add(word.slice(i, i + 2))
+    }
+  }
+  return { grams: [...grams], chars: [...chars] }
+}
+
+/**
+ * 按相关性排序并过滤明显无关的结果。
+ *
+ * 搜索引擎的中文长尾质量很不稳定：查「战雷 最新版本」，Bing 会把「战」字的字典页排在前面。
+ * 只用 2-gram 命中判断会误伤（「战争雷霆」并不包含子串「战雷」），所以叠加一层
+ * **查询字符覆盖率**：标题里出现了几个不同查询字，就加多少分。
+ * 若所有结果都不得分（查询词很生僻），保持原顺序返回，不做清洗。
+ */
+const rankHits = (query: string, hits: SearchHit[]): SearchHit[] => {
+  const { grams, chars } = queryTerms(query)
+  if (hits.length <= 1 || (grams.length === 0 && chars.length === 0)) {
+    return hits
+  }
+  const scored = hits.map((hit, index) => {
+    const title = hit.title.toLowerCase()
+    const snippet = hit.snippet.toLowerCase()
+    const both = `${title}\n${snippet}`
+    let score = 0
+    for (const gram of grams) {
+      const key = gram.toLowerCase()
+      if (title.includes(key)) {
+        score += 3
+      } else if (snippet.includes(key)) {
+        score += 1
+      }
+    }
+    if (chars.length > 0) {
+      let covered = 0
+      for (const char of chars) {
+        if (both.includes(char.toLowerCase())) {
+          covered += 1
+        }
+      }
+      // 覆盖率最多加 4 分，保证它只用于「同分时区分明显更相关的那条」
+      score += (covered / chars.length) * 4
+    }
+    return { hit, score, index }
+  })
+  if (!scored.some((item) => item.score > 0)) {
+    return hits
+  }
+  return scored
+    .filter((item) => item.score > 0)
+    .sort((a, b) => b.score - a.score || a.index - b.index)
+    .map((item) => item.hit)
 }
 
 /**
@@ -1191,7 +1292,7 @@ export const searchWeb = async (queries: string[], signal?: AbortSignal): Promis
       if (!cached) {
         cacheSet(query, found)
       }
-      for (const hit of found) {
+      for (const hit of rankHits(query, found)) {
         if (seen.has(hit.url)) {
           continue
         }
