@@ -185,10 +185,17 @@ const UpdateBody = z.object({
 })
 
 export const channelRoutes = async (app: FastifyInstance): Promise<void> => {
-  const findChannel = (id: string): ChannelRow => {
-    const row = app.db.prepare('SELECT * FROM channels WHERE id = ?').get(id) as
-      | ChannelRow
-      | undefined
+  /**
+   * 取单个渠道。带上 key_count：新建/PATCH 的响应也要和列表页字段一致，
+   * 否则前端刚保存完就会看到「Key 数」变成 0。
+   */
+  const findChannel = (id: string): ChannelRow & { key_count: number } => {
+    const row = app.db
+      .prepare(
+        `SELECT c.*, (SELECT COUNT(*) FROM keys k WHERE k.channel_id = c.id) AS key_count
+         FROM channels c WHERE c.id = ?`
+      )
+      .get(id) as (ChannelRow & { key_count: number }) | undefined
     if (!row) {
       throw notFound('渠道不存在')
     }

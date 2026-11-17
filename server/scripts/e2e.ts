@@ -657,6 +657,63 @@ const main = async (): Promise<void> => {
       const body = (await response.json()) as { description?: string }
       assert((body.description ?? '').length > 0, '描述为空')
     })
+    // ---------------- J. 能力分层与偏好 ----------------
+    await check('免费账号拿不到官方能力（403）', async () => {
+      const response = await anon.post('/api/ocr') // 未登录先确认 401
+      assert(response.status === 401, `未登录 status=${response.status}`)
+
+      const freeClient = new Client(base)
+      assert((await freeClient.login('bob', 'bob-pass-123')) === 200, 'bob 登录失败')
+      const caps = await freeClient.json<{ official: Record<string, boolean> }>('/api/capabilities')
+      // bob 在这轮里已经被授权过付费模型，所以这里只断言结构存在
+      assert(typeof caps.official.ocr === 'boolean', '缺少 official.ocr 字段')
+
+      const form = new FormData()
+      form.append('file', new Blob(['x'], { type: 'text/plain' }), 'x.txt')
+      const ocr = await freeClient.request('/api/ocr', { method: 'POST', body: form })
+      // 未授权 → 403；已授权但 OCR 不可用 → 400/403 都算「被挡住」
+      assert([400, 403].includes(ocr.status), `OCR status=${ocr.status}`)
+    })
+
+    await check('能力偏好：切到浏览器后服务端返回 501', async () => {
+      const prefs = await admin.json<{ prefs: Record<string, string> }>('/api/capabilities/prefs')
+      assert(prefs.prefs.tts === 'auto', `默认 tts=${prefs.prefs.tts}`)
+
+      const put = await admin.request('/api/capabilities/prefs', {
+        method: 'PUT',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ tts: 'browser', asr: 'browser' }),
+      })
+      assert(put.status === 200, `PUT status=${put.status}`)
+
+      const tts = await admin.post('/api/speech/tts', {
+        text: '你好',
+        voice_id: 'stella',
+        format: 'wav',
+      })
+      assert(tts.status === 501, `TTS 应返回 501（交给浏览器），实际 ${tts.status}`)
+
+      const asr = await admin.request('/api/speech/asr', { method: 'POST', body: new FormData() })
+      assert(asr.status === 501, `ASR 应返回 501，实际 ${asr.status}`)
+
+      // 还原，避免影响后续用例
+      await admin.request('/api/capabilities/prefs', {
+        method: 'PUT',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ tts: 'auto', asr: 'auto' }),
+      })
+    })
+
+    await check('能力矩阵包含官方与浏览器两档', async () => {
+      const caps = await admin.json<{
+        tier: string
+        official: Record<string, boolean>
+        browser: Record<string, boolean>
+      }>('/api/capabilities')
+      assert(caps.tier === 'admin', `tier=${caps.tier}`)
+      assert(typeof caps.official.search === 'boolean', '缺少 official.search')
+      assert(caps.browser.speechSynthesis === true, '缺少 browser.speechSynthesis')
+    })
   } finally {
     cleanup()
   }

@@ -2,7 +2,16 @@ import type { FastifyInstance } from 'fastify'
 import { z } from 'zod'
 import { badRequest, serverBusy, tooLarge } from '../lib/errors.ts'
 import { requireUser } from '../plugins/auth.ts'
+import { HttpError } from '../lib/errors.ts'
+
+/** 用户明确选择了浏览器实现：用 501 让前端走本地的 Web Speech 兜底（见 services/api/speech.ts） */
+class NotOfficialError extends HttpError {
+  constructor(message: string) {
+    super(501, 'internal', message)
+  }
+}
 import { officialPost, requireOfficialTools } from '../caps/official.ts'
+import { isDisabled, wantsBrowser } from '../caps/prefs.ts'
 
 /**
  * 语音能力：把 DeepSeek 官方 TTS / ASR 搬到后端。
@@ -28,6 +37,10 @@ export const speechRoutes = async (app: FastifyInstance): Promise<void> => {
   /** 语音识别：转发到官方 /v1/tools/asr */
   app.post('/speech/asr', { preHandler: requireUser }, async (request) => {
     const user = request.user!
+    // 用户在设置里选了「浏览器」：直接 501，让前端走本地兜底，不花官方的钱
+    if (wantsBrowser(app, user, 'asr') || isDisabled(app, user, 'asr')) {
+      throw new NotOfficialError('ASR 已设置为浏览器实现')
+    }
     const credential = requireOfficialTools(app, user, 'asr')
 
     const file = await request.file().catch(() => null)
@@ -75,6 +88,9 @@ export const speechRoutes = async (app: FastifyInstance): Promise<void> => {
   /** 语音合成：转发到官方 /v1/tools/tts，音频边合成边回传 */
   app.post('/speech/tts', { preHandler: requireUser }, async (request, reply) => {
     const user = request.user!
+    if (wantsBrowser(app, user, 'tts') || isDisabled(app, user, 'tts')) {
+      throw new NotOfficialError('TTS 已设置为浏览器实现')
+    }
     const credential = requireOfficialTools(app, user, 'tts')
 
     const parsed = TtsBody.safeParse(request.body)

@@ -3,6 +3,7 @@ import { create } from 'zustand'
 import type { TranslationMessage } from '../../i18n/index.js'
 import { isSpeechUnsupported, probeTranscribe, transcribe } from '../../services/api/speech.js'
 import { useSettings } from '../../services/settings.js'
+import { shouldUseServer } from '../../services/capPrefs.js'
 import { startRecording, type Recording } from '../../services/speech/recorder.js'
 import { showToast } from '../base/toastState.js'
 
@@ -323,7 +324,8 @@ export const useVoiceInput = (onText: (text: string) => void) => {
     setStatus('recording')
     let { backend: current } = useAsrBackend.getState()
     if (current === 'unknown') {
-      const supported = await probeTranscribe()
+      // 设置里选了「浏览器」就直接走本地识别，不再探服务端（省一次往返）
+      const supported = shouldUseServer('asr') ? await probeTranscribe() : false
       if (operationRef.current !== operation) {
         return
       }

@@ -6,6 +6,12 @@ import { requireUser } from '../plugins/auth.ts'
 import { canUseOfficialTools } from '../caps/official.ts'
 import { officialOcr } from '../caps/ocr.ts'
 import { findFile, fileDiskPath } from '../storage/files.ts'
+import {
+  capabilityPrefsRoutes,
+  isDisabled,
+  readCapabilityPrefs,
+  wantsBrowser,
+} from '../caps/prefs.ts'
 
 /**
  * 能力探测：前端「设置」页用它决定哪些开关可用、走服务端还是浏览器兜底。
@@ -36,7 +42,10 @@ export const capabilityRoutes = async (app: FastifyInstance): Promise<void> => {
   app.get('/capabilities', { preHandler: requireUser }, async (request) => ({
     ray: request.ray,
     ...describe(request.user!),
+    prefs: readCapabilityPrefs(app, request.user!.id),
   }))
+
+  await app.register(capabilityPrefsRoutes)
 
   /**
    * 独立 OCR：上传即识别，不进入对话。
@@ -44,6 +53,9 @@ export const capabilityRoutes = async (app: FastifyInstance): Promise<void> => {
    */
   app.post('/ocr', { preHandler: requireUser }, async (request) => {
     const user = request.user!
+    if (isDisabled(app, user, 'ocr')) {
+      throw forbidden('OCR 已在设置里关闭')
+    }
     if (!canUseOfficialTools(app, user, 'ocr')) {
       throw forbidden('OCR 需要管理员或授权账号')
     }

@@ -1,20 +1,23 @@
-import { useCallback, useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import clsx from 'clsx'
 import { useTranslate } from '../../i18n/index.js'
 import { apiUrl, request } from '../../services/api/client.js'
 import { currentCapabilities } from '../../services/capabilities.js'
+import { loadCapPrefs, setCapPref, useCapPrefs, type CapKey, type CapSource } from '../../services/capPrefs.js'
 import { Button } from '../base/Button.js'
+import { Select } from '../base/Select.js'
 import { showToast } from '../base/toastState.js'
 import styles from './Settings.module.css'
 import cap from './CapabilitySettings.module.css'
 
 /**
- * 「能力与账号」分区：把账号层级与官方能力可用性摆出来，并提供 OCR 自测。
+ * 「能力与账号」分区。
  *
- * 三档账号的差异在这里是可见的，用户不会因为「点了没反应」而困惑：
- * - 管理员：官方能力全绿
- * - 授权账号：同样全绿（后端按 grants 判定）
- * - 免费账号：显示「浏览器」，说明走的是本地兜底
+ * 每项能力一行：左边名字 + 说明，右边是「来源」下拉，最后是当前生效状态徽标。
+ * - 官方：管理员与授权账号可选（按次计费，质量最好）
+ * - 浏览器：TTS/ASR 可用（免费，质量一般）
+ * - 关闭：search/fetch/ocr/document 可以彻底关掉
+ * 免费账号只有「浏览器 / 关闭」两档，下拉里不会出现「官方」。
  */
 
 type Matrix = NonNullable<ReturnType<typeof currentCapabilities>>
@@ -29,39 +32,63 @@ const ROWS: { key: CapabilityKey; label: 'settingsCapSearch' | 'settingsCapFetch
   { key: 'document', label: 'settingsCapDocument' },
 ]
 
-/** 这些能力即便没有官方实现，浏览器/本地也能兜住 */
-const BROWSER_FALLBACK: CapabilityKey[] = ['tts', 'asr', 'ocr', 'document']
+/** 哪些能力有浏览器实现（决定下拉里是否出现「浏览器」） */
+const HAS_BROWSER: CapabilityKey[] = ['tts', 'asr']
 
-const Row = ({
-  label,
-  hint,
-  badge,
-  badgeTone,
-  action,
-}: {
-  label: string
-  hint?: string
-  badge: string
-  badgeTone: 'on' | 'off' | 'browser'
-  action?: React.ReactNode
-}) => (
-  <div className={clsx(styles.cell, styles.row)}>
-    <div className={styles.text}>
-      <div className={styles.label}>{label}</div>
-      {hint ? <div className={styles.description}>{hint}</div> : null}
-    </div>
-    {action ?? null}
-    <span className={clsx(cap.badge, cap[badgeTone])}>{badge}</span>
-  </div>
-)
+const toCapKey = (key: CapabilityKey): CapKey => key as CapKey
 
 export const CapabilitySettings = () => {
   const t = useTranslate()
   const matrix = currentCapabilities()
+  const prefs = useCapPrefs((state) => state.prefs)
+  const saved = useCapPrefs((state) => state.loaded)
   const [busy, setBusy] = useState(false)
   const inputRef = useRef<HTMLInputElement | null>(null)
 
-  const runOcr = useCallback(async (file: File) => {
+  useEffect(() => {
+    if (!saved) {
+      void loadCapPrefs()
+    }
+  }, [saved])
+
+  const optionsFor = (key: CapabilityKey): { value: CapSource; label: string }[] => {
+    const list: { value: CapSource; label: string }[] = [
+      { value: 'auto', label: t('settingsCapSourceAuto') },
+    ]
+    if (matrix?.official[key] === true) {
+      list.push({ value: 'server', label: t('settingsCapSourceServer') })
+    }
+    if (HAS_BROWSER.includes(key)) {
+      list.push({ value: 'browser', label: t('settingsCapSourceBrowser') })
+    }
+    list.push({ value: 'off', label: t('settingsCapSourceOff') })
+    return list
+  }
+
+  const onChange = async (key: CapabilityKey, value: CapSource) => {
+    try {
+      await setCapPref(toCapKey(key), value)
+      showToast({ key: 'settingsCapPrefSaved' })
+    } catch (error) {
+      showToast({ type: 'error', key: 'settingsCapOcrFailed', params: { message: String(error) } })
+    }
+  }
+
+  const effective = (key: CapabilityKey): 'server' | 'browser' | 'off' => {
+    const pref = prefs[toCapKey(key)]
+    if (pref === 'off') {
+      return 'off'
+    }
+    if (pref === 'browser') {
+      return 'browser'
+    }
+    if (pref === 'server') {
+      return matrix?.official[key] === true ? 'server' : 'off'
+    }
+    return matrix?.official[key] === true ? 'server' : HAS_BROWSER.includes(key) ? 'browser' : 'off'
+  }
+
+  const runOcr = async (file: File) => {
     setBusy(true)
     try {
       const form = new FormData()
@@ -72,7 +99,7 @@ export const CapabilitySettings = () => {
       try {
         await navigator.clipboard.writeText(text)
       } catch {
-        // 剪贴板不可用：结果只留在 toast 里，不再额外打日志
+        // 剪贴板不可用：结果仍通过 toast 提示页数
       }
       showToast({ key: 'settingsCapOcrDone', params: { pages: String(body.pages ?? 1) } })
     } catch (error) {
@@ -81,7 +108,7 @@ export const CapabilitySettings = () => {
     } finally {
       setBusy(false)
     }
-  }, [])
+  }
 
   return (
     <>
@@ -90,27 +117,34 @@ export const CapabilitySettings = () => {
           <div className={styles.label}>{t('settingsCapabilities')}</div>
           <div className={styles.description}>{t('settingsCapabilitiesHint')}</div>
         </div>
-        <span className={clsx(cap.badge, cap.tier)}>
-          {matrix?.tier === 'admin' ? t('settingsCapTierAdmin') : t('settingsCapTierUser')}
-        </span>
       </div>
 
       {ROWS.map((row) => {
-        const official = matrix?.official[row.key] === true
-        const fallback = BROWSER_FALLBACK.includes(row.key)
+        const current = effective(row.key)
         return (
-          <Row
-            key={row.key}
-            label={t(row.label)}
-            badge={
-              official
+          <div key={row.key} className={clsx(styles.cell, styles.row)}>
+            <div className={styles.text}>
+              <div className={styles.label}>{t(row.label)}</div>
+            </div>
+            <Select
+              ariaLabel={t(row.label)}
+              value={prefs[toCapKey(row.key)]}
+              options={optionsFor(row.key)}
+              onChange={(value) => void onChange(row.key, value)}
+            />
+            <span
+              className={clsx(
+                cap.badge,
+                current === 'server' ? cap.on : current === 'browser' ? cap.browser : cap.off
+              )}
+            >
+              {current === 'server'
                 ? t('settingsCapOnServer')
-                : fallback
+                : current === 'browser'
                   ? t('settingsCapOnBrowser')
-                  : t('settingsCapOff')
-            }
-            badgeTone={official ? 'on' : fallback ? 'browser' : 'off'}
-          />
+                  : t('settingsCapOff')}
+            </span>
+          </div>
         )
       })}
 
@@ -122,7 +156,7 @@ export const CapabilitySettings = () => {
         <Button
           variant="outlined"
           size="m"
-          disabled={busy || matrix?.official.ocr !== true}
+          disabled={busy || effective('ocr') !== 'server'}
           onClick={() => inputRef.current?.click()}
         >
           {busy ? t('settingsCapOcrRunning') : t('settingsCapOcrAction')}

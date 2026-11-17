@@ -2,6 +2,7 @@ import { create } from 'zustand'
 import type { TranslationMessage } from '../../i18n/index.js'
 import { ApiError } from '../api/client.js'
 import { classifyApiError } from '../api/errors.js'
+import { shouldUseServer } from '../capPrefs.js'
 import {
   isSpeechUnsupported,
   SpeechUnsupportedError,
@@ -182,6 +183,13 @@ export const toggleReadAloud = (
     let lastSource: AudioBufferSourceNode | null = null
     let rest = new Uint8Array(0)
     try {
+      // 设置里选了「浏览器」就直接用 speechSynthesis，不发请求、不产生官方费用
+      if (!shouldUseServer('tts')) {
+        if (!speakInBrowser(messageId, text, onError)) {
+          onError(new SpeechUnsupportedError(501))
+        }
+        return
+      }
       const stream = await synthesize(text, ttsVoice, controller.signal)
       const reader = stream.getReader()
       controller.signal.addEventListener('abort', () => void reader.cancel().catch(() => {}))
