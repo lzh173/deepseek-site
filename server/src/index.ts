@@ -23,6 +23,8 @@ import { fileRoutes } from './routes/files.ts'
 import { healthRoutes } from './routes/health.ts'
 import { modelRoutes } from './routes/models.ts'
 import { sessionRoutes } from './routes/sessions.ts'
+import { speechRoutes } from './routes/speech.ts'
+import { capabilityRoutes } from './routes/capabilities.ts'
 import { visionRoutes } from './routes/vision.ts'
 
 export const buildApp = async (): Promise<FastifyInstance> => {
@@ -81,6 +83,8 @@ export const buildApp = async (): Promise<FastifyInstance> => {
       await api.register(fileRoutes)
       await api.register(sessionRoutes)
       await api.register(visionRoutes)
+      await api.register(speechRoutes)
+      await api.register(capabilityRoutes)
       await api.register(adminRoutes, { prefix: '/admin' })
     },
     { prefix: '/api' }

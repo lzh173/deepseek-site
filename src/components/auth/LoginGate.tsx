@@ -2,6 +2,7 @@ import { useEffect, useState, type KeyboardEvent, type ReactNode } from 'react'
 import { useTranslate } from '../../i18n/index.js'
 import { checkAuth, signIn, useAuth } from '../../services/auth.js'
 import { loadModels } from '../../services/models.js'
+import { fetchCapabilities, resetCapabilities } from '../../services/capabilities.js'
 import { Button } from '../base/Button.js'
 import { Modal } from '../base/Modal.js'
 import styles from './LoginGate.module.css'
@@ -22,6 +23,9 @@ export const LoginGate = ({ children }: { children: ReactNode }) => {
 
   useEffect(() => {
     if (status === 'authenticated') {
+      // 登录后先拉能力矩阵，设置页与语音/OCR 入口据此决定走服务端还是浏览器
+      resetCapabilities()
+      void fetchCapabilities()
       void loadModels()
     }
   }, [status])

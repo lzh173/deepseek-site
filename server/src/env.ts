@@ -38,6 +38,13 @@ const EnvSchema = z.object({
   RAY_FIRST_TOKEN_TIMEOUT_MS: z.coerce.number().int().min(1000).max(300_000).default(15_000),
   /** DeepSeek 官方渠道的 BASE URL；OpenAI 兼容接口不带 /v1，默认即可 */
   RAY_OFFICIAL_BASE_URL: z.string().url().optional(),
+  /**
+   * 官方工具类能力（search / fetch / tts / asr / ocr / 文档解析）的开放范围。
+   * 取值：admin | authorized | all，逗号分隔。默认「管理员 + 被授权账号」。
+   */
+  RAY_OFFICIAL_TOOLS_FOR: z.string().default('admin,authorized'),
+  /** 设为 "0" 可整体关闭官方工具能力，全部回退到免费实现 */
+  RAY_OFFICIAL_TOOLS: z.enum(['0', '1']).default('1'),
 })
 
 export type Env = z.infer<typeof EnvSchema> & {

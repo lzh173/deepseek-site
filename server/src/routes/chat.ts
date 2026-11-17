@@ -12,6 +12,8 @@ import fs from 'node:fs'
 import type { FastifyBaseLogger, FastifyInstance, FastifyReply } from 'fastify'
 import { z } from 'zod'
 import { extractDocument } from '../caps/documents.ts'
+import { officialOcr } from '../caps/ocr.ts'
+import { canUseOfficialTools } from '../caps/official.ts'
 import { readUrl, type ReadResult } from '../caps/reader.ts'
 import { planSearchQueries } from '../caps/query.ts'
 import { hasOfficialSearch, officialFetch, officialSearch } from '../caps/official-search.ts'
@@ -302,6 +304,8 @@ const inlineImage = async (
 }
 
 /** 预算截断标记（与 caps/documents.ts 的单文档标记一致，便于模型识别正文不完整） */
+/** 本地抽取少于这个字数就认为「没抽到有效内容」，值得调官方 OCR（扫描件普遍如此） */
+const MIN_LOCAL_TEXT_CHARS = 40
 const DOCUMENT_TRUNCATED_MARK = '\n…（已截断）'
 
 /**
@@ -317,17 +321,38 @@ type AttachmentEntry =
   /** 占位文本（已失效 / 看不了图 / 无法解析） */
   | { kind: 'text'; text: string }
 
-/** 读文档：抽不出正文时降级成占位文本（绝不抛，见 §9 铁律 3） */
+/**
+ * 读文档。顺序：本地抽取（免费）→ 官方 OCR（按页计费，质量更好）→ 占位文本。
+ *
+ * 先本地再官方，是因为一份正常的电子版 PDF/DOCX 本地就能抽得很干净，没必要花钱；
+ * 只有当本地抽不出东西（扫描件、纯图 PDF）或抽出来太少时，才值得调官方 OCR。
+ */
 const documentEntry = async (
+  app: FastifyInstance,
+  user: SessionUser,
   fileId: string,
   row: FileRow,
-  bytes: Buffer
+  bytes: Buffer,
+  signal: AbortSignal,
+  log: FastifyBaseLogger
 ): Promise<AttachmentEntry> => {
   const extracted = await extractDocument(bytes, row.mime, row.name)
-  if (!extracted) {
-    return unreadableDocument(fileId)
+  if (extracted && extracted.text.trim().length >= MIN_LOCAL_TEXT_CHARS) {
+    return { kind: 'document', filename: row.name, text: extracted.text }
   }
-  return { kind: 'document', filename: row.name, text: extracted.text }
+
+  if (canUseOfficialTools(app, user, 'ocr')) {
+    const viaOfficial = await officialOcr(app, user, bytes, row.name, row.mime, signal, log)
+    if (viaOfficial) {
+      log.info({ fileId, pages: viaOfficial.pages }, '文档改用官方 OCR 解析')
+      return { kind: 'document', filename: row.name, text: viaOfficial.text }
+    }
+  }
+
+  if (extracted && extracted.text.trim().length > 0) {
+    return { kind: 'document', filename: row.name, text: extracted.text }
+  }
+  return unreadableDocument(fileId)
 }
 
 type AttachmentInput = {
@@ -383,7 +408,10 @@ const resolveAttachments = async (
         resolved.set(fileId, expiredFile(fileId))
         continue
       }
-      resolved.set(fileId, await documentEntry(fileId, row, bytes))
+      resolved.set(
+        fileId,
+        await documentEntry(input.app, input.user, fileId, row, bytes, input.signal, input.log)
+      )
     } catch (error) {
       input.log.warn({ ray: input.ray, fileId, kind, err: error }, '附件解析失败，改用占位文本')
       resolved.set(fileId, kind === 'image' ? unreadableImage(fileId) : unreadableDocument(fileId))
