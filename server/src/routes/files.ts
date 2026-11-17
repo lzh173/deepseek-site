@@ -100,7 +100,10 @@ const maxBytesFor = (mime: string, purpose: string | null): number => {
 /** multipart 的 filename 由客户端提供，只留文件名部分并去掉控制字符与引号。 */
 const sanitizeFilename = (raw: string): string => {
   const base = raw.split(/[\\/]/).pop() ?? ''
-  const cleaned = base.replace(/[\u0000-\u001f\u007f"]/g, '_').trim().slice(0, 200)
+  const cleaned = base
+    .replace(/[\u0000-\u001f\u007f"]/g, '_')
+    .trim()
+    .slice(0, 200)
   return cleaned.length > 0 ? cleaned : 'file'
 }
 
@@ -161,8 +164,7 @@ export const fileRoutes = async (app: FastifyInstance): Promise<void> => {
       throw tooLarge(`文件超过 ${env.RAY_MAX_UPLOAD_MB} MB 上限`)
     }
 
-    const mime =
-      declaredMime ?? (sampled && looksLikeText(sampled.head()) ? 'text/plain' : null)
+    const mime = declaredMime ?? (sampled && looksLikeText(sampled.head()) ? 'text/plain' : null)
     if (!mime) {
       await discardUpload(app.db, stored)
       throw badRequest(`Failed to recognize the file: ${filename}`)

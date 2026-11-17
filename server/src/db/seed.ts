@@ -20,22 +20,12 @@ export const seedAdmin = async (db: Db): Promise<void> => {
 
   db.prepare(
     'INSERT INTO users (id, username, pass_hash, role, enabled, daily_quota, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)'
-  ).run(
-    randomId('usr'),
-    env.RAY_ADMIN_USER,
-    passHash,
-    'admin',
-    1,
-    0,
-    nowIso()
-  )
+  ).run(randomId('usr'), env.RAY_ADMIN_USER, passHash, 'admin', 1, 0, nowIso())
 
   if (provided) {
     console.log(`[zhds] 已创建管理员：${env.RAY_ADMIN_USER}`)
   } else {
-    console.log(
-      `[zhds] 已创建管理员：${env.RAY_ADMIN_USER}，初始密码（仅显示一次）：${password}`
-    )
+    console.log(`[zhds] 已创建管理员：${env.RAY_ADMIN_USER}，初始密码（仅显示一次）：${password}`)
   }
 }
 
@@ -69,7 +59,20 @@ export const seedUpstream = (db: Db): void => {
     db.prepare(
       `INSERT INTO keys (id, channel_id, key_cipher, label, group_label, weight, status, cooldown_until, daily_quota, fail_count, last_ok_at, created_at)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-    ).run(keyId, channelId, encryptSecret(apiKey), '默认 Key', null, 1, 'active', null, 1000, 0, null, now)
+    ).run(
+      keyId,
+      channelId,
+      encryptSecret(apiKey),
+      '默认 Key',
+      null,
+      1,
+      'active',
+      null,
+      1000,
+      0,
+      null,
+      now
+    )
 
     db.prepare(
       `INSERT INTO models (id, display_name, context, caps_json, tier, fallback_chain_json, enabled)

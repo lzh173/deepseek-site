@@ -304,9 +304,10 @@ export class StreamTranslator {
 
     const delta = choice.delta ?? {}
     // 先思考后正文：同一帧里两者都可能出现，各自开自己的块
-    const reasoning = this.config.emitThinking === false
-      ? ''
-      : readString(delta.reasoning_content) || readString(delta.reasoning)
+    const reasoning =
+      this.config.emitThinking === false
+        ? ''
+        : readString(delta.reasoning_content) || readString(delta.reasoning)
     if (reasoning !== '') {
       events.push(...this.pushThinking(reasoning))
     }

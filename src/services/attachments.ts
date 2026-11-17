@@ -118,12 +118,7 @@ const next = () => {
 }
 
 /** 排队上传，最多同时上传 MAX_CONCURRENT 个；排队期间中止的任务不会发出请求 */
-const enqueueUpload = (
-  file: Blob,
-  name: string,
-  isImage: boolean,
-  signal: AbortSignal
-) =>
+const enqueueUpload = (file: Blob, name: string, isImage: boolean, signal: AbortSignal) =>
   new Promise<string>((resolve, reject) => {
     queue.push(async () => {
       if (signal.aborted) {

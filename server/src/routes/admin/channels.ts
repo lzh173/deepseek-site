@@ -85,13 +85,21 @@ export const probeModels = async (baseUrl: string, secret: string | null): Promi
     // 鉴权类失败：key 错、没权限、余额不足
     if (status === 401 || status === 403) {
       return {
-        ...fail(`上游拒绝鉴权（HTTP ${status}）`, `检查 API Key 是否正确、是否有该渠道权限`, status),
+        ...fail(
+          `上游拒绝鉴权（HTTP ${status}）`,
+          `检查 API Key 是否正确、是否有该渠道权限`,
+          status
+        ),
         latency_ms: latency,
       }
     }
     if (status === 404) {
       return {
-        ...fail(`端点不存在（HTTP 404）`, `base_url 可能少了 /v1 之类的路径前缀，或该服务不提供 /models`, status),
+        ...fail(
+          `端点不存在（HTTP 404）`,
+          `base_url 可能少了 /v1 之类的路径前缀，或该服务不提供 /models`,
+          status
+        ),
         latency_ms: latency,
       }
     }

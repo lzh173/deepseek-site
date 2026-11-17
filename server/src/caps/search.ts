@@ -440,7 +440,9 @@ const attempt = async (name: string, run: () => Promise<SearchHit[]>): Promise<S
     return hits
   } catch (error) {
     if (DEBUG) {
-      console.error(`[search] ${name}: 失败 ${Date.now() - started}ms ${String(error).slice(0, 80)}`)
+      console.error(
+        `[search] ${name}: 失败 ${Date.now() - started}ms ${String(error).slice(0, 80)}`
+      )
     }
     return []
   }
@@ -1220,7 +1222,9 @@ const rankHits = (query: string, hits: SearchHit[]): SearchHit[] => {
     return hits
   }
   const words = query.split(/\s+/u).filter((word) => word.length > 0)
-  const distinctive = words.filter((word) => /[a-z0-9]/iu.test(compact(word)) && compact(word).length >= 3)
+  const distinctive = words.filter(
+    (word) => /[a-z0-9]/iu.test(compact(word)) && compact(word).length >= 3
+  )
   const strict = distinctive.length > 0
 
   const scored = hits.map((hit, index) => {
@@ -1272,7 +1276,10 @@ export const normalizeQuery = (raw: string): string => {
   let text = raw.replace(/\s+/gu, ' ').trim()
 
   // 1) 去掉句末标点与语气词
-  text = text.replace(/[。！？!?~～…]+$/u, '').replace(/[，,、\s]+$/u, '').trim()
+  text = text
+    .replace(/[。！？!?~～…]+$/u, '')
+    .replace(/[，,、\s]+$/u, '')
+    .trim()
 
   const courtesy = /^(?:请|麻烦|劳驾)?\s*(?:你|您|帮我|帮忙|帮忙给|给我)?\s*/u
   const verb =

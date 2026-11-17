@@ -69,15 +69,7 @@ export const ensureOfficialModels = (db: Db): string[] => {
     db.prepare(
       `INSERT INTO models (id, display_name, context, caps_json, tier, fallback_chain_json, enabled)
        VALUES (?, ?, ?, ?, ?, ?, ?)`
-    ).run(
-      model.id,
-      model.displayName,
-      model.context,
-      JSON.stringify(model.caps),
-      'paid',
-      '[]',
-      1
-    )
+    ).run(model.id, model.displayName, model.context, JSON.stringify(model.caps), 'paid', '[]', 1)
     created.push(model.id)
   }
   return created
@@ -90,10 +82,9 @@ export const ensureOfficialModels = (db: Db): string[] => {
 export const mapOfficialModelsToKey = (db: Db, keyId: string): number => {
   let added = 0
   for (const model of OFFICIAL_MODELS) {
-    const exists = db.prepare('SELECT 1 FROM key_models WHERE key_id = ? AND public_model = ?').get(
-      keyId,
-      model.id
-    )
+    const exists = db
+      .prepare('SELECT 1 FROM key_models WHERE key_id = ? AND public_model = ?')
+      .get(keyId, model.id)
     if (exists) {
       continue
     }
@@ -114,9 +105,10 @@ export const mapOfficialModelsToKey = (db: Db, keyId: string): number => {
  * 4. 清掉旧模型名（只有在无人引用时才删，避免破坏历史会话的展示）
  */
 export const syncOfficialChannels = (db: Db): void => {
-  const channels = db
-    .prepare('SELECT id, base_url FROM channels WHERE official = 1')
-    .all() as { id: string; base_url: string }[]
+  const channels = db.prepare('SELECT id, base_url FROM channels WHERE official = 1').all() as {
+    id: string
+    base_url: string
+  }[]
   if (channels.length === 0) {
     return
   }
@@ -132,9 +124,7 @@ export const syncOfficialChannels = (db: Db): void => {
   changed.push(...ensureOfficialModels(db).map((id) => `model ${id}`))
 
   const keys = db
-    .prepare(
-      'SELECT k.id FROM keys k JOIN channels c ON c.id = k.channel_id WHERE c.official = 1'
-    )
+    .prepare('SELECT k.id FROM keys k JOIN channels c ON c.id = k.channel_id WHERE c.official = 1')
     .all() as { id: string }[]
   let mapped = 0
   for (const key of keys) {

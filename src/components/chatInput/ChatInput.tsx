@@ -247,10 +247,7 @@ const Input = ({ sessionId }: { sessionId: string | null }) => {
             disabled={!voice.available}
             seconds={voice.seconds}
             onClick={() => {
-              if (
-                voice.status !== 'idle' ||
-                !useChatStore.getState().importingHistory
-              ) {
+              if (voice.status !== 'idle' || !useChatStore.getState().importingHistory) {
                 void voice.toggle()
               }
             }}

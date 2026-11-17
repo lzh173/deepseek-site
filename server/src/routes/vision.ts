@@ -73,8 +73,7 @@ type ImagePayload = {
 /** data URL 的 MIME 必须是裸类型（不带参数）；异常值退回 png。 */
 const IMAGE_MIME_RE = /^image\/[a-z0-9.+-]+$/i
 
-const normalizeImageMime = (mime: string): string =>
-  IMAGE_MIME_RE.test(mime) ? mime : 'image/png'
+const normalizeImageMime = (mime: string): string => (IMAGE_MIME_RE.test(mime) ? mime : 'image/png')
 
 /**
  * 读原图：先确认库里有记录且当前用户可读，再核对磁盘原件大小，最后整块读入并转 base64。
@@ -194,9 +193,7 @@ const readContent = (content: unknown): string => {
 }
 
 /** 从 OpenAI 形状的响应里取正文与 token 用量；缺字段一律按 0 / 空串处理。 */
-const readUpstream = (
-  payload: unknown
-): { description: string; inTok: number; outTok: number } => {
+const readUpstream = (payload: unknown): { description: string; inTok: number; outTok: number } => {
   if (!isRecord(payload)) {
     return { description: '', inTok: 0, outTok: 0 }
   }

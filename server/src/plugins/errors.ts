@@ -44,40 +44,50 @@ export const errorPlugin = fp((app: FastifyInstance, _opts: unknown, done: () =>
     }
 
     if (error instanceof HttpError) {
-      void reply.code(error.status).type('application/json; charset=utf-8').send({
-        ray,
-        error: { type: error.type, message: withRay(error.message, ray) },
-      })
+      void reply
+        .code(error.status)
+        .type('application/json; charset=utf-8')
+        .send({
+          ray,
+          error: { type: error.type, message: withRay(error.message, ray) },
+        })
       return
     }
 
     const statusCode = (error as { statusCode?: unknown }).statusCode
     const status =
       typeof statusCode === 'number' && statusCode >= 400 && statusCode <= 599 ? statusCode : 500
-    const rawMessage = typeof (error as { message?: unknown }).message === 'string'
-      ? (error as { message: string }).message
-      : '服务器内部错误'
+    const rawMessage =
+      typeof (error as { message?: unknown }).message === 'string'
+        ? (error as { message: string }).message
+        : '服务器内部错误'
 
     request.log.error({ err: error, ray, status }, 'request failed')
 
-    void reply.code(status).type('application/json; charset=utf-8').send({
-      ray,
-      error: {
-        type: typeForStatus(status),
-        message: withRay(
-          status >= 500 ? '服务器内部错误' : localizeMessage(status, rawMessage),
-          ray
-        ),
-      },
-    })
+    void reply
+      .code(status)
+      .type('application/json; charset=utf-8')
+      .send({
+        ray,
+        error: {
+          type: typeForStatus(status),
+          message: withRay(
+            status >= 500 ? '服务器内部错误' : localizeMessage(status, rawMessage),
+            ray
+          ),
+        },
+      })
   })
 
   app.setNotFoundHandler((request, reply) => {
     const ray = request.ray || newRay()
-    void reply.code(404).type('application/json; charset=utf-8').send({
-      ray,
-      error: { type: 'not_found', message: withRay('接口不存在', ray) },
-    })
+    void reply
+      .code(404)
+      .type('application/json; charset=utf-8')
+      .send({
+        ray,
+        error: { type: 'not_found', message: withRay('接口不存在', ray) },
+      })
   })
 
   done()

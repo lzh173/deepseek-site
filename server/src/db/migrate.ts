@@ -12,9 +12,14 @@ const migrationsDir = path.join(here, 'migrations')
  * 不依赖 drizzle-kit / 任何代码生成，保证换机器直接可跑。
  */
 export const migrate = (db: Db): void => {
-  db.exec('CREATE TABLE IF NOT EXISTS _migrations (name TEXT PRIMARY KEY, applied_at TEXT NOT NULL)')
+  db.exec(
+    'CREATE TABLE IF NOT EXISTS _migrations (name TEXT PRIMARY KEY, applied_at TEXT NOT NULL)'
+  )
   const applied = new Set(
-    db.prepare('SELECT name FROM _migrations').all().map((row) => (row as { name: string }).name)
+    db
+      .prepare('SELECT name FROM _migrations')
+      .all()
+      .map((row) => (row as { name: string }).name)
   )
   const files = fs
     .readdirSync(migrationsDir)

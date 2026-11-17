@@ -59,7 +59,11 @@ export const officialOcr = async (
     const form = new FormData()
     // 顺序很重要：purpose 必须在 file 之前（官方文档明确要求）
     form.append('purpose', 'text_recognition')
-    form.append('file', new Blob([new Uint8Array(bytes)], { type: mime || 'application/octet-stream' }), filename)
+    form.append(
+      'file',
+      new Blob([new Uint8Array(bytes)], { type: mime || 'application/octet-stream' }),
+      filename
+    )
 
     const response = await fetch(officialUrl(credential, '/v1/tools/ocr'), {
       method: 'POST',

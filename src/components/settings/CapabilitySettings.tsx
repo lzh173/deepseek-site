@@ -3,7 +3,13 @@ import clsx from 'clsx'
 import { useTranslate } from '../../i18n/index.js'
 import { apiUrl, request } from '../../services/api/client.js'
 import { currentCapabilities } from '../../services/capabilities.js'
-import { loadCapPrefs, setCapPref, useCapPrefs, type CapKey, type CapSource } from '../../services/capPrefs.js'
+import {
+  loadCapPrefs,
+  setCapPref,
+  useCapPrefs,
+  type CapKey,
+  type CapSource,
+} from '../../services/capPrefs.js'
 import { Button } from '../base/Button.js'
 import { Select } from '../base/Select.js'
 import { showToast } from '../base/toastState.js'
@@ -23,7 +29,16 @@ import cap from './CapabilitySettings.module.css'
 type Matrix = NonNullable<ReturnType<typeof currentCapabilities>>
 type CapabilityKey = keyof Matrix['official']
 
-const ROWS: { key: CapabilityKey; label: 'settingsCapSearch' | 'settingsCapFetch' | 'settingsCapTts' | 'settingsCapAsr' | 'settingsCapOcr' | 'settingsCapDocument' }[] = [
+const ROWS: {
+  key: CapabilityKey
+  label:
+    | 'settingsCapSearch'
+    | 'settingsCapFetch'
+    | 'settingsCapTts'
+    | 'settingsCapAsr'
+    | 'settingsCapOcr'
+    | 'settingsCapDocument'
+}[] = [
   { key: 'search', label: 'settingsCapSearch' },
   { key: 'fetch', label: 'settingsCapFetch' },
   { key: 'tts', label: 'settingsCapTts' },

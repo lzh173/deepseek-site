@@ -6,6 +6,7 @@ import {
   IconDownloadOutline16,
   IconFollowsystemOutline16,
   IconLightOutline16,
+  IconLinkOutline16,
   IconSettingsOutline16,
   IconUploadOutline14,
 } from '../base/icons.js'
@@ -36,6 +37,7 @@ import { Select } from '../base/Select.js'
 import { showToast } from '../base/toastState.js'
 import { closeSettings, useSettingsDialog, type SettingsSection } from './settingsDialogState.js'
 import { CapabilitySettings } from './CapabilitySettings.js'
+import { AboutSettings } from './AboutSettings.js'
 import styles from './Settings.module.css'
 
 /**
@@ -53,8 +55,13 @@ const sections: { value: SettingsSection; label: TranslationKey; icon: ReactNode
     label: 'settingDialogAsideGeneralOptionLabel',
     icon: <IconSettingsOutline16 />,
   },
-  { value: 'capabilities', label: 'settingDialogAsideCapabilityOptionLabel', icon: <IconSettingsOutline16 /> },
+  {
+    value: 'capabilities',
+    label: 'settingDialogAsideCapabilityOptionLabel',
+    icon: <IconSettingsOutline16 />,
+  },
   { value: 'data', label: 'settingDialogAsideDataOptionLabel', icon: <IconDataOutline16 /> },
+  { value: 'about', label: 'settingDialogAsideAboutOptionLabel', icon: <IconLinkOutline16 /> },
 ]
 
 const SettingsContent = () => {
@@ -104,6 +111,8 @@ const SettingsContent = () => {
             </>
           ) : section === 'capabilities' ? (
             <CapabilitySettings />
+          ) : section === 'about' ? (
+            <AboutSettings />
           ) : (
             <>
               <AccountSetting />

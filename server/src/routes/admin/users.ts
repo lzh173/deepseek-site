@@ -233,9 +233,7 @@ export const userAdminRoutes = async (app: FastifyInstance): Promise<void> => {
         .slice(0, 5)
         .map((item) => `${item.model_id} × ${item.key_id}`)
         .join('、')
-      throw badRequest(
-        `以下 Key 不能调用对应模型：${detail}${invalid.length > 5 ? ' 等' : ''}`
-      )
+      throw badRequest(`以下 Key 不能调用对应模型：${detail}${invalid.length > 5 ? ' 等' : ''}`)
     }
 
     // 主键是 (user_id, model_id, key_id)，同组合重复只留最后一条

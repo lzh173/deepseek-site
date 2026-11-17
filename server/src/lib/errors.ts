@@ -34,7 +34,8 @@ export const badRequest = (message: string): HttpError =>
 export const unauthorized = (message = '请先登录'): HttpError =>
   new HttpError(401, 'unauthorized', message)
 
-export const forbidden = (message = '无权访问'): HttpError => new HttpError(403, 'forbidden', message)
+export const forbidden = (message = '无权访问'): HttpError =>
+  new HttpError(403, 'forbidden', message)
 
 export const notFound = (message = '资源不存在'): HttpError =>
   new HttpError(404, 'not_found', message)

@@ -17,7 +17,12 @@ import { forbidden, serverBusy } from '../lib/errors.ts'
 
 export type OfficialCapability = 'search' | 'fetch' | 'tts' | 'asr' | 'ocr' | 'document'
 
-export type OfficialCredential = { baseUrl: string; secret: string; keyId: string; channelId: string }
+export type OfficialCredential = {
+  baseUrl: string
+  secret: string
+  keyId: string
+  channelId: string
+}
 
 const pickCredential = (app: FastifyInstance): OfficialCredential | null => {
   const rows = app.db

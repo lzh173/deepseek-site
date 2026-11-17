@@ -17,14 +17,14 @@ services:
     image: zh-deepseek-bff:latest
     restart: unless-stopped
     ports:
-      - "127.0.0.1:3000:3000"
+      - '127.0.0.1:3000:3000'
     environment:
       RAY_HOST: 0.0.0.0
-      RAY_PORT: "3000"
+      RAY_PORT: '3000'
       RAY_DATA_DIR: /data
       RAY_LOG_LEVEL: info
       # 走 Cloudflare 时浏览器侧是 https，Cookie 必须带 Secure
-      RAY_COOKIE_SECURE: "true"
+      RAY_COOKIE_SECURE: 'true'
       # 以下从 --env-file 注入（名字必须显式声明才会进入容器）
       RAY_MASTER_KEY: ${RAY_MASTER_KEY:-}
       RAY_ADMIN_USER: ${RAY_ADMIN_USER:-admin}
@@ -48,7 +48,7 @@ services:
     volumes:
       - ./deploy/searxng/settings.yml:/etc/searxng/settings.yml:ro
     expose:
-      - "8080"
+      - '8080'
 
 volumes:
   ray-data:

@@ -31,7 +31,11 @@ const check = async (name: string, run: () => Promise<void> | void): Promise<voi
     await run()
     results.push({ name, ok: true })
   } catch (error) {
-    results.push({ name, ok: false, detail: error instanceof Error ? error.message : String(error) })
+    results.push({
+      name,
+      ok: false,
+      detail: error instanceof Error ? error.message : String(error),
+    })
   }
 }
 
@@ -115,7 +119,9 @@ const startMockUpstream = async (): Promise<{ server: Server; port: number }> =>
       if (mockState.fail429 > 0) {
         mockState.fail429 -= 1
         res.writeHead(429, { 'content-type': 'application/json' })
-        res.end(JSON.stringify({ error: { message: 'rps exhausted', type: 'quota_exceeded_error' } }))
+        res.end(
+          JSON.stringify({ error: { message: 'rps exhausted', type: 'quota_exceeded_error' } })
+        )
         return
       }
 
@@ -355,7 +361,10 @@ const main = async (): Promise<void> => {
       const body = JSON.parse(text) as { items: { id: string; secret_masked?: string }[] }
       assert(body.items.length === 2, `导入数量 ${body.items.length}`)
       keyIds = body.items.map((item) => item.id)
-      assert(body.items.every((item) => (item.secret_masked ?? '').includes('••••')), '没有掩码')
+      assert(
+        body.items.every((item) => (item.secret_masked ?? '').includes('••••')),
+        '没有掩码'
+      )
     })
 
     const publicModel = 'e2e-chat'
@@ -373,7 +382,9 @@ const main = async (): Promise<void> => {
           method: 'PUT',
           headers: { 'content-type': 'application/json' },
           body: JSON.stringify({
-            models: [{ public_model: publicModel, upstream_model: 'mock-1', weight: 1, enabled: true }],
+            models: [
+              { public_model: publicModel, upstream_model: 'mock-1', weight: 1, enabled: true },
+            ],
           }),
         })
         assert(mapped.status === 200, `映射 status=${mapped.status}`)
@@ -402,12 +413,26 @@ const main = async (): Promise<void> => {
       for (const frame of frames) {
         assert(frame.event === (frame.data as { type?: string }).type, 'event 名与 type 不一致')
       }
-      const starts = frames.filter((frame) => types[0] !== undefined && (frame.data as { type?: string }).type === 'content_block_start')
+      const starts = frames.filter(
+        (frame) =>
+          types[0] !== undefined && (frame.data as { type?: string }).type === 'content_block_start'
+      )
       const indexes = starts.map((frame) => (frame.data as { index: number }).index)
-      assert(JSON.stringify(indexes) === JSON.stringify([...indexes].sort((a, b) => a - b)), '块索引不递增')
-      const delta = frames.find((frame) => (frame.data as { type?: string }).type === 'message_delta')
-      const payload = delta?.data as { delta?: { title?: string }; usage?: { output_tokens?: number } }
-      assert(typeof payload?.delta?.title === 'string' && payload.delta.title.length > 0, '缺少 title')
+      assert(
+        JSON.stringify(indexes) === JSON.stringify([...indexes].sort((a, b) => a - b)),
+        '块索引不递增'
+      )
+      const delta = frames.find(
+        (frame) => (frame.data as { type?: string }).type === 'message_delta'
+      )
+      const payload = delta?.data as {
+        delta?: { title?: string }
+        usage?: { output_tokens?: number }
+      }
+      assert(
+        typeof payload?.delta?.title === 'string' && payload.delta.title.length > 0,
+        '缺少 title'
+      )
       assert((payload?.usage?.output_tokens ?? 0) > 0, '缺少 output_tokens')
     })
 
@@ -436,7 +461,10 @@ const main = async (): Promise<void> => {
     await check('上游 429 时换 Key 重试成功', async () => {
       mockState.fail429 = 1
       const response = await admin.post('/api/chat', chatBody(publicModel, '重试测试'))
-      assert(response.status === 200, `status=${response.status}：${(await response.clone().text()).slice(0, 200)}`)
+      assert(
+        response.status === 200,
+        `status=${response.status}：${(await response.clone().text()).slice(0, 200)}`
+      )
       const raw = await response.text()
       assert(raw.includes('message_stop'), '没有正常结束')
     })
@@ -445,7 +473,10 @@ const main = async (): Promise<void> => {
       // 让上游对接下来每一次请求都返回 429：重试会换 Key，但两把都打不通
       mockState.fail429 = 50
       const response = await admin.post('/api/chat', chatBody(publicModel, '应该失败'))
-      const body = (await response.json()) as { ray?: string; error?: { type?: string; message?: string } }
+      const body = (await response.json()) as {
+        ray?: string
+        error?: { type?: string; message?: string }
+      }
       assert(response.status === 503, `status=${response.status}`)
       assert(body.error?.type === 'server_busy', `type=${body.error?.type}`)
       assert(/ray_[0-9a-f]{12}/u.test(body.error?.message ?? ''), '缺少 ray')
@@ -472,7 +503,9 @@ const main = async (): Promise<void> => {
       const text = raw.indexOf('"type":"text"')
       assert(first >= 0 && second > first && text > second, '块顺序不对')
       assert(raw.includes('结果一'), '没有注入检索结果')
-      const lastBody = mockState.lastBodies.at(-1) as { messages?: { content?: unknown }[] } | undefined
+      const lastBody = mockState.lastBodies.at(-1) as
+        | { messages?: { content?: unknown }[] }
+        | undefined
       assert(JSON.stringify(lastBody ?? {}).includes('检索结果'), 'system 里没有检索上下文')
     })
 
@@ -532,7 +565,10 @@ const main = async (): Promise<void> => {
       assert(put.status === 200, `PUT status=${put.status}`)
 
       const list = await admin.json<{ sessions: { id: string }[] }>('/api/sessions')
-      assert(list.sessions.some((item) => item.id === 's1'), '列表里没有 s1')
+      assert(
+        list.sessions.some((item) => item.id === 's1'),
+        '列表里没有 s1'
+      )
 
       const one = await admin.json<{ session: { payload: string } }>('/api/sessions/s1')
       assert(one.session.payload === payload, 'payload 不一致')
@@ -565,7 +601,12 @@ const main = async (): Promise<void> => {
       await admin.request('/api/admin/users', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ username: 'bob', password: 'bob-pass-123', role: 'user', daily_quota: 100 }),
+        body: JSON.stringify({
+          username: 'bob',
+          password: 'bob-pass-123',
+          role: 'user',
+          daily_quota: 100,
+        }),
       })
       const paidModel = 'e2e-paid'
       await admin.request('/api/admin/models', {
@@ -576,7 +617,13 @@ const main = async (): Promise<void> => {
           display_name: 'E2E Paid',
           context: 8192,
           tier: 'paid',
-          caps: { vision: false, reasoning: true, web_search: false, read_url: false, file_parse: false },
+          caps: {
+            vision: false,
+            reasoning: true,
+            web_search: false,
+            read_url: false,
+            file_parse: false,
+          },
         }),
       })
       await admin.request(`/api/admin/keys/${keyIds[0]}/models`, {
@@ -600,7 +647,9 @@ const main = async (): Promise<void> => {
     })
 
     await check('授权后可用，且配额超限返回 429', async () => {
-      const users = await admin.json<{ items: { id: string; username: string }[] }>('/api/admin/users')
+      const users = await admin.json<{ items: { id: string; username: string }[] }>(
+        '/api/admin/users'
+      )
       const bobRow = users.items.find((item) => item.username === 'bob')
       if (!bobRow) {
         throw new Error('找不到 bob')

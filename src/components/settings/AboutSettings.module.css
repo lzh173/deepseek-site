@@ -1,0 +1,28 @@
+.link {
+  flex: none;
+  margin-left: 12px;
+  padding: 4px 10px;
+  border-radius: 6px;
+  font-size: 13px;
+  text-decoration: none;
+  color: var(--dsw-alias-label-primary);
+  border: 1px solid var(--dsw-alias-border-secondary);
+  background: var(--dsw-alias-fill-secondary);
+}
+
+.link:hover {
+  background: var(--dsw-alias-fill-tertiary);
+}
+
+.badge {
+  flex: none;
+  margin-left: 12px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 12px;
+  line-height: 18px;
+  white-space: nowrap;
+  color: var(--dsw-alias-label-secondary);
+  background: var(--dsw-alias-fill-secondary);
+  border: 1px solid var(--dsw-alias-border-secondary);
+}

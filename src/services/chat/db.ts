@@ -199,9 +199,7 @@ const rememberFile = async (file: StoredFile): Promise<string> => {
   }
   const body =
     file.blob instanceof File ? file.blob : new File([file.blob], file.id, { type: file.blob.type })
-  const purpose: FilePurpose | null = file.blob.type.startsWith('image/')
-    ? null
-    : 'user_data'
+  const purpose: FilePurpose | null = file.blob.type.startsWith('image/') ? null : 'user_data'
   const object = await uploadFile(body, purpose)
   registerFileId(file.id, object.id)
   return object.id

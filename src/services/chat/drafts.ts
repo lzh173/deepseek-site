@@ -57,7 +57,10 @@ const upload = (attachment: DraftAttachment) => {
 }
 
 /** 整批校验通过后才创建预览和开始上传。 */
-export const addDraftFiles = (sessionId: string | null, files: File[]): TranslationMessage | null => {
+export const addDraftFiles = (
+  sessionId: string | null,
+  files: File[]
+): TranslationMessage | null => {
   if (files.length === 0) {
     return null
   }

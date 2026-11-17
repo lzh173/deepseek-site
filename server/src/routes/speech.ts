@@ -62,15 +62,12 @@ export const speechRoutes = async (app: FastifyInstance): Promise<void> => {
       file.filename || 'recording.wav'
     )
 
-    const response = await fetch(
-      `${credential.baseUrl}/v1/tools/asr`,
-      {
-        method: 'POST',
-        headers: { authorization: `Bearer ${credential.secret}` },
-        body: form,
-        signal: AbortSignal.timeout(120_000),
-      }
-    ).catch(() => null)
+    const response = await fetch(`${credential.baseUrl}/v1/tools/asr`, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${credential.secret}` },
+      body: form,
+      signal: AbortSignal.timeout(120_000),
+    }).catch(() => null)
 
     if (!response) {
       throw serverBusy('语音识别服务不可达')

@@ -136,9 +136,9 @@ export type RegisterFileInput = {
  * 内容相同只存一份，文件名与 MIME 保留首次登记的值。
  */
 export const registerFile = (db: Db, input: RegisterFileInput): FileRow => {
-  const existing = db
-    .prepare('SELECT * FROM files WHERE sha256 = ?')
-    .get(input.sha256) as FileRow | undefined
+  const existing = db.prepare('SELECT * FROM files WHERE sha256 = ?').get(input.sha256) as
+    | FileRow
+    | undefined
 
   if (existing) {
     return existing

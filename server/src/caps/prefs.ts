@@ -42,10 +42,7 @@ const PrefsBody = z.object({
 
 const PREFS_KEY = 'capability.prefs'
 
-export const readCapabilityPrefs = (
-  app: FastifyInstance,
-  userId: string
-): CapabilityPrefs => {
+export const readCapabilityPrefs = (app: FastifyInstance, userId: string): CapabilityPrefs => {
   const row = app.db
     .prepare('SELECT value_json FROM user_prefs WHERE user_id = ? AND key = ?')
     .get(userId, PREFS_KEY) as { value_json: string } | undefined

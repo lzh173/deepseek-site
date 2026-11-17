@@ -113,9 +113,7 @@ export const pickKey = async (
   }
 
   const day = todayUtc()
-  const rows = app.db
-    .prepare(CANDIDATE_SQL)
-    .all(day, model.id, nowIso()) as CandidateRow[]
+  const rows = app.db.prepare(CANDIDATE_SQL).all(day, model.id, nowIso()) as CandidateRow[]
 
   const candidates = rows
     .filter((row) => (onlyKeys ? onlyKeys.has(row.key_id) : true))
@@ -170,20 +168,19 @@ export const reportKey = (app: FastifyInstance, pick: PoolPick, outcome: PoolOut
 
   if (status === 401 || status === 403) {
     app.db
-      .prepare("UPDATE keys SET status = 'disabled', fail_count = ?, last_ok_at = last_ok_at WHERE id = ?")
+      .prepare(
+        "UPDATE keys SET status = 'disabled', fail_count = ?, last_ok_at = last_ok_at WHERE id = ?"
+      )
       .run(failCount, pick.keyId)
     return
   }
 
   // 429 多为「每秒请求数」限流，恢复很快，用较短的退避；
   // 其他失败（5xx / 网络）给 30 秒，避免反复打到坏 Key 上。
-  const cooldownSeconds =
-    status === 429 ? Math.min(15 * 2 ** (failCount - 1), 300) : 30
+  const cooldownSeconds = status === 429 ? Math.min(15 * 2 ** (failCount - 1), 300) : 30
 
   app.db
-    .prepare(
-      `UPDATE keys SET fail_count = ?, status = 'cooling', cooldown_until = ? WHERE id = ?`
-    )
+    .prepare(`UPDATE keys SET fail_count = ?, status = 'cooling', cooldown_until = ? WHERE id = ?`)
     .run(failCount, addSeconds(cooldownSeconds), pick.keyId)
 }
 

@@ -48,7 +48,11 @@ const main = async (): Promise<void> => {
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ username: USERNAME, password: PASSWORD }),
   })
-  check('POST /api/auth/login', login.ok, `status=${login.status} body=${await login.clone().text()}`)
+  check(
+    'POST /api/auth/login',
+    login.ok,
+    `status=${login.status} body=${await login.clone().text()}`
+  )
 
   const me = await json<{ user: { username: string } | null }>(await call('/api/me'))
   check('GET /api/me 返回登录用户', me.user?.username === USERNAME)
@@ -56,7 +60,9 @@ const main = async (): Promise<void> => {
   const modelsRes = await call('/api/models')
   const models = await json<{ models: { id: string; available: boolean }[] }>(modelsRes)
   check('GET /api/models', modelsRes.ok)
-  console.log(`    可用模型：${models.models.map((m) => `${m.id}${m.available ? '' : '(无可用Key)'}`).join(', ') || '（空）'}`)
+  console.log(
+    `    可用模型：${models.models.map((m) => `${m.id}${m.available ? '' : '(无可用Key)'}`).join(', ') || '（空）'}`
+  )
 
   const target = models.models.find((m) => m.available)
   if (!target) {
@@ -76,7 +82,12 @@ const main = async (): Promise<void> => {
         stream: true,
       }),
     })
-    check('POST /api/chat 200 + SSE', chatRes.status === 200 && String(chatRes.headers.get('content-type')).includes('text/event-stream'), String(chatRes.status))
+    check(
+      'POST /api/chat 200 + SSE',
+      chatRes.status === 200 &&
+        String(chatRes.headers.get('content-type')).includes('text/event-stream'),
+      String(chatRes.status)
+    )
     const text = await chatRes.text()
     check('收到 message_stop', text.includes('message_stop'))
     const types = [...text.matchAll(/^event: (.+)$/gm)].map((m) => m[1])

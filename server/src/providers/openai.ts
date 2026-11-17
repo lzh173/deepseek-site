@@ -46,9 +46,7 @@ export class UpstreamError extends Error {
 
   /** 鉴权失败说明这把 Key 坏了；限流与 5xx 是暂时性的，都值得换 Key */
   get retryable(): boolean {
-    return (
-      this.status === 401 || this.status === 403 || this.status === 429 || this.status >= 500
-    )
+    return this.status === 401 || this.status === 403 || this.status === 429 || this.status >= 500
   }
 }
 

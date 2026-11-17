@@ -50,11 +50,7 @@ import {
   type OpenAiMessage,
   type ResolvedFile,
 } from '../protocol/translate.ts'
-import {
-  firstTokenTimeoutMs,
-  streamChatCompletion,
-  UpstreamError,
-} from '../providers/openai.ts'
+import { firstTokenTimeoutMs, streamChatCompletion, UpstreamError } from '../providers/openai.ts'
 import { canAccessFile, fileDiskPath, findFile, isSha256 } from '../storage/files.ts'
 
 /** 首次请求之外最多再换 3 次 Key（GOAL.md §7.2） */
@@ -95,7 +91,10 @@ const bodySchema = z
     model: z.string().min(1),
     system: z.string().optional(),
     messages: z.array(messageSchema).min(1),
-    thinking: z.object({ type: z.enum(['enabled', 'disabled']) }).passthrough().optional(),
+    thinking: z
+      .object({ type: z.enum(['enabled', 'disabled']) })
+      .passthrough()
+      .optional(),
     tools: z.array(z.object({ type: z.string() }).passthrough()).optional(),
     safety_check: z.object({ level: z.string() }).passthrough().optional(),
     title: z.object({ enabled: z.boolean() }).passthrough().optional(),
@@ -130,8 +129,7 @@ const openSse = (reply: FastifyReply, ray: string): void => {
   })
 }
 
-const canWrite = (reply: FastifyReply): boolean =>
-  !reply.raw.destroyed && !reply.raw.writableEnded
+const canWrite = (reply: FastifyReply): boolean => !reply.raw.destroyed && !reply.raw.writableEnded
 
 /** 一帧 SSE：event 名等于 JSON 的 type，双换行结尾 */
 const writeEvent = (reply: FastifyReply, event: MessageStreamEvent): void => {
@@ -614,7 +612,12 @@ const prepareRead = async (
         if (viaOfficial) {
           return {
             link,
-            result: { url: link, title: viaOfficial.title, text: viaOfficial.content, publishedAt: null },
+            result: {
+              url: link,
+              title: viaOfficial.title,
+              text: viaOfficial.content,
+              publishedAt: null,
+            },
           }
         }
         return { link, result: await readUrl(link, signal) }
@@ -675,8 +678,8 @@ const prepareTools = async (input: {
 
     const [search, read] = await Promise.all([
       wantSearch
-          ? prepareSearch(input.app, input.ray, queries, input.signal, input.log)
-          : Promise.resolve(null),
+        ? prepareSearch(input.app, input.ray, queries, input.signal, input.log)
+        : Promise.resolve(null),
       wantRead
         ? prepareRead(input.app, input.ray, extractLinks(text), input.signal, input.log)
         : Promise.resolve(null),

@@ -73,9 +73,9 @@ export const listSessions = (db: Db, userId: string): SessionSummaryDto[] =>
 
 /** 读一个会话；不属于该用户时返回 null（路由层转 404，不泄露存在性）。 */
 export const findSession = (db: Db, userId: string, id: string): SessionDetailDto | null => {
-  const row = db
-    .prepare('SELECT * FROM sessions WHERE id = ? AND user_id = ?')
-    .get(id, userId) as SessionRow | undefined
+  const row = db.prepare('SELECT * FROM sessions WHERE id = ? AND user_id = ?').get(id, userId) as
+    | SessionRow
+    | undefined
   return row ? toDetail(row) : null
 }
 
@@ -169,7 +169,10 @@ const syncSessionFiles = (db: Db, sessionId: string, fileIds: string[]): void =>
     if (next.has(sha256)) {
       continue
     }
-    db.prepare('DELETE FROM session_files WHERE session_id = ? AND sha256 = ?').run(sessionId, sha256)
+    db.prepare('DELETE FROM session_files WHERE session_id = ? AND sha256 = ?').run(
+      sessionId,
+      sha256
+    )
     decrementFileRef(db, sha256)
   }
   for (const sha256 of next) {
@@ -212,8 +215,9 @@ export const saveSession = (
     const now = nowIso()
     if (existing) {
       const title = input.title ?? existing.title
-      db.prepare('UPDATE sessions SET title = ?, payload = ?, updated_at = ? WHERE id = ? AND user_id = ?')
-        .run(title, input.payload, now, id, userId)
+      db.prepare(
+        'UPDATE sessions SET title = ?, payload = ?, updated_at = ? WHERE id = ? AND user_id = ?'
+      ).run(title, input.payload, now, id, userId)
     } else {
       db.prepare(
         'INSERT INTO sessions (id, user_id, title, payload, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)'
@@ -222,9 +226,9 @@ export const saveSession = (
 
     syncSessionFiles(db, id, fileIds)
 
-    const row = db.prepare('SELECT * FROM sessions WHERE id = ? AND user_id = ?').get(id, userId) as
-      | SessionRow
-      | undefined
+    const row = db
+      .prepare('SELECT * FROM sessions WHERE id = ? AND user_id = ?')
+      .get(id, userId) as SessionRow | undefined
     if (!row) {
       throw notFound('会话不存在')
     }

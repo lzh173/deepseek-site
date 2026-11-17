@@ -109,11 +109,7 @@ const ProbeCell = ({ probe, testing }: { probe?: ProbeResult; testing: boolean }
   }
   if (probe.ok) {
     return (
-      <Tag
-        tone="success"
-        title={probe.hint ?? ''}
-        className={styles.probeTag}
-      >
+      <Tag tone="success" title={probe.hint ?? ''} className={styles.probeTag}>
         {probe.model_count === undefined
           ? copy.channels.probeOk(probe.latency_ms, probe.status ?? 0)
           : copy.channels.probeOkModels(probe.latency_ms, probe.status ?? 0, probe.model_count)}
@@ -123,7 +119,9 @@ const ProbeCell = ({ probe, testing }: { probe?: ProbeResult; testing: boolean }
   const detail = probe.hint ? `${probe.error ?? ''}\n→ ${probe.hint}` : (probe.error ?? '')
   return (
     <Tag tone="danger" className={styles.probeTag} title={detail}>
-      {probe.error ? copy.channels.probeError(probe.error) : copy.channels.probeFailed(probe.latency_ms)}
+      {probe.error
+        ? copy.channels.probeError(probe.error)
+        : copy.channels.probeFailed(probe.latency_ms)}
     </Tag>
   )
 }

@@ -6,7 +6,9 @@ import { rspack, type Configuration } from '@rspack/core'
 
 // `rspack serve` 走开发模式，`rspack build` 走生产模式。
 // 不依赖 `NODE_ENV=production` 前缀，Windows 的 cmd 与 POSIX shell 用同一条命令即可。
-const dev = process.env.NODE_ENV ? process.env.NODE_ENV !== 'production' : process.argv.includes('serve')
+const dev = process.env.NODE_ENV
+  ? process.env.NODE_ENV !== 'production'
+  : process.argv.includes('serve')
 const targets = ['chrome >= 105', 'edge >= 105', 'safari >= 16', 'firefox >= 110']
 const root = path.dirname(fileURLToPath(import.meta.url))
 const { version } = JSON.parse(

@@ -100,9 +100,7 @@ const LoginCard = ({ offline }: { offline: boolean }) => {
       }
     >
       <div className={styles.form}>
-        <p className={styles.hint}>
-          {offline ? t('loginServerOffline') : t('loginDescription')}
-        </p>
+        <p className={styles.hint}>{offline ? t('loginServerOffline') : t('loginDescription')}</p>
         <label className={styles.field}>
           <span className={styles.label}>{t('loginUsername')}</span>
           <input

@@ -2,11 +2,11 @@
 use_default_settings: true
 
 general:
-  instance_name: "ray-search"
+  instance_name: 'ray-search'
 
 server:
   # 生产部署请改掉；SearXNG 用它给 cookie / 缓存签名
-  secret_key: "ray-change-this-secret-key"
+  secret_key: 'ray-change-this-secret-key'
   limiter: false
   image_proxy: false
 

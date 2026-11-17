@@ -65,5 +65,7 @@ const dataDir = path.resolve(parsed.data.RAY_DATA_DIR)
 export const env: Env = {
   ...parsed.data,
   dataDir,
-  dbPath: parsed.data.RAY_DB_PATH ? path.resolve(parsed.data.RAY_DB_PATH) : path.join(dataDir, 'ray.db'),
+  dbPath: parsed.data.RAY_DB_PATH
+    ? path.resolve(parsed.data.RAY_DB_PATH)
+    : path.join(dataDir, 'ray.db'),
 }
