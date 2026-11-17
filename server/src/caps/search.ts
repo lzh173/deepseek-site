@@ -1074,17 +1074,21 @@ const searchOne = async (query: string, signal: AbortSignal): Promise<SearchHit[
 }
 
 /**
- * 预热：进程刚起来时到 bing.com 的首次 TLS 握手可能超过搜索预算（实测冷启动 ~8s），
- * 百度 / 360 也各要一次握手。先各发一个只建连、不读正文的请求，后续真实搜索就能落在一秒内。
- * 失败无所谓，纯粹是性能优化。
+ * 预热：进程刚起来时，到各搜索源的首次握手可能远超搜索预算（实测 bing 冷启动 8.2 秒），
+ * 结果是「启动后第一次搜索必挂」。这里对**真实搜索端点**各发一次轻量请求，
+ * 把 DNS / TLS / 连接池都建起来；失败无所谓，纯粹是性能优化。
  */
 export const warmupSearch = (): void => {
-  const targets = ['https://www.baidu.com/', 'https://www.so.com/', 'https://www.bing.com/']
+  const targets = [
+    'https://www.so.com/s?q=warmup',
+    'https://www.baidu.com/s?wd=warmup&rn=10',
+    'https://www.bing.com/search?format=rss&q=warmup',
+  ]
   for (const target of targets) {
     void fetch(target, {
       method: 'GET',
       headers: {
-        accept: 'text/html,application/xhtml+xml',
+        accept: 'text/html,application/xhtml+xml,application/rss+xml',
         'accept-language': 'zh-CN,zh;q=0.9',
         'user-agent': USER_AGENT,
       },
@@ -1096,13 +1100,61 @@ export const warmupSearch = (): void => {
 }
 
 /**
+ * 查询归一化：用户常写「搜索 xxx」「帮我查一下 xxx」，这些动词进搜索引擎会污染结果
+ * （实测「搜索 warthunder」返回的是搜狗首页和导航站）。这里只剥掉开头的指令词。
+ */
+const normalizeQuery = (raw: string): string => {
+  const trimmed = raw.replace(/\s+/gu, ' ').trim()
+  const stripped = trimmed
+    .replace(/^(?:请|帮忙|帮我|麻烦)?\s*(?:联网)?(?:搜索|搜一下|搜下|搜|查询|查一下|查下|查找|百度)\s*(?:一下)?\s*[:：,，]?\s*/u, '')
+    .trim()
+  return stripped.length > 0 ? stripped : trimmed
+}
+
+/**
+ * 结果缓存：同一 query 十分钟内复用上一次的结果。
+ *
+ * 两个作用：① 省掉重复请求，中文搜索引擎对连续请求很敏感（360 会回空壳页、百度会弹验证）；
+ * ② 用户重试、或同一条消息被重发时，不会因为限流退化成一堆空结果。
+ */
+const CACHE_TTL_MS = 10 * 60 * 1000
+const CACHE_MAX = 100
+const cache = new Map<string, { hits: SearchHit[]; at: number }>()
+
+const cacheGet = (key: string): SearchHit[] | null => {
+  const entry = cache.get(key)
+  if (!entry) {
+    return null
+  }
+  if (Date.now() - entry.at > CACHE_TTL_MS) {
+    cache.delete(key)
+    return null
+  }
+  return entry.hits
+}
+
+const cacheSet = (key: string, hits: SearchHit[]): void => {
+  // 只缓存有结果的，空结果不缓存，避免把一次限流固化成十分钟的「查不到」
+  if (hits.length === 0) {
+    return
+  }
+  if (cache.size >= CACHE_MAX) {
+    const oldest = cache.keys().next()
+    if (!oldest.done) {
+      cache.delete(oldest.value)
+    }
+  }
+  cache.set(key, { hits, at: Date.now() })
+}
+
+/**
  * 联网搜索：多个 query 依次查询、按 url 去重，最多 6 条。
  * 任何失败（未配置、超时、HTTP 错误、解析失败）都返回 []，绝不抛错。
  */
 export const searchWeb = async (queries: string[], signal?: AbortSignal): Promise<SearchHit[]> => {
   const list: string[] = []
   for (const raw of queries) {
-    const query = raw.trim()
+    const query = normalizeQuery(raw)
     if (query !== '' && !list.includes(query)) {
       list.push(query)
     }
@@ -1134,7 +1186,11 @@ export const searchWeb = async (queries: string[], signal?: AbortSignal): Promis
     const hits: SearchHit[] = []
     const seen = new Set<string>()
     for (const query of list) {
-      const found = await searchOne(query, controller.signal)
+      const cached = cacheGet(query)
+      const found = cached ?? (await searchOne(query, controller.signal))
+      if (!cached) {
+        cacheSet(query, found)
+      }
       for (const hit of found) {
         if (seen.has(hit.url)) {
           continue
