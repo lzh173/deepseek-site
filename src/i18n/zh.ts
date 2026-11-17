@@ -121,7 +121,7 @@ export const zh = {
   avatarMenuSettingsDialogThemeSelectSystemOption: '跟随系统',
   confirm: '确定',
   appLoading: '正在加载...',
-  loginTitle: '登录 Ray',
+  loginTitle: '登录 ZH DeepSeek',
   loginDescription: '请使用管理员分配的账号登录',
   loginUsername: '用户名',
   loginUsernamePlaceholder: '请输入用户名',

@@ -105,7 +105,7 @@ export const buildApp = async (): Promise<FastifyInstance> => {
       index: ['index.html'],
       wildcard: false,
     })
-    app.log.info(`[ray] serving static site from ${webDir}`)
+    app.log.info(`[zhds] serving static site from ${webDir}`)
   }
 
   return app
@@ -122,5 +122,5 @@ if (isMain) {
   process.on('SIGINT', () => void close())
   process.on('SIGTERM', () => void close())
   await app.listen({ port: env.RAY_PORT, host: env.RAY_HOST })
-  app.log.info(`[ray] listening on http://${env.RAY_HOST}:${env.RAY_PORT}`)
+  app.log.info(`[zhds] listening on http://${env.RAY_HOST}:${env.RAY_PORT}`)
 }

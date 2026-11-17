@@ -5,7 +5,7 @@
  * 但文案集中在这一处，以后要接翻译时只需替换这个对象。
  */
 export const copy = {
-  appName: 'Ray',
+  appName: 'ZH DeepSeek',
   appSubtitle: '管理后台',
   backToChat: '返回聊天',
 

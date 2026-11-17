@@ -11,7 +11,7 @@ RUN corepack enable
 COPY pnpm-workspace.yaml package.json pnpm-lock.yaml ./
 COPY server/package.json ./server/
 
-RUN pnpm install --frozen-lockfile --filter @ray/server
+RUN pnpm install --frozen-lockfile --filter @zh-deepseek/server
 
 COPY server ./server
 

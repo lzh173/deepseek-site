@@ -31,10 +31,10 @@ export const seedAdmin = async (db: Db): Promise<void> => {
   )
 
   if (provided) {
-    console.log(`[ray] 已创建管理员：${env.RAY_ADMIN_USER}`)
+    console.log(`[zhds] 已创建管理员：${env.RAY_ADMIN_USER}`)
   } else {
     console.log(
-      `[ray] 已创建管理员：${env.RAY_ADMIN_USER}，初始密码（仅显示一次）：${password}`
+      `[zhds] 已创建管理员：${env.RAY_ADMIN_USER}，初始密码（仅显示一次）：${password}`
     )
   }
 }
@@ -95,5 +95,5 @@ export const seedUpstream = (db: Db): void => {
     ).run(keyId, 'ray-chat', upstreamModel, 1, 1)
   })()
 
-  console.log(`[ray] 已按 RAY_UPSTREAM_* 创建默认渠道、Key 与模型 ray-chat → ${upstreamModel}`)
+  console.log(`[zhds] 已按 RAY_UPSTREAM_* 创建默认渠道、Key 与模型 ray-chat → ${upstreamModel}`)
 }

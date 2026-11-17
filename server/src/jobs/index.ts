@@ -21,7 +21,7 @@ const cleanupOrphans = async (app: FastifyInstance): Promise<number> => {
   }
 
   if (rows.length > 0) {
-    app.log.info({ removed: rows.length }, '[ray] 已清理孤儿文件')
+    app.log.info({ removed: rows.length }, '[zhds] 已清理孤儿文件')
   }
   return rows.length
 }

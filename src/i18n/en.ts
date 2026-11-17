@@ -125,7 +125,7 @@ export const en = {
   avatarMenuSettingsDialogThemeSelectSystemOption: 'System',
   confirm: 'Confirm',
   appLoading: 'Loading...',
-  loginTitle: 'Log in to Ray',
+  loginTitle: 'Log in to ZH DeepSeek',
   loginDescription: 'Sign in with the account provided by your administrator',
   loginUsername: 'Username',
   loginUsernamePlaceholder: 'Enter your username',

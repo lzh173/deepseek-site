@@ -173,6 +173,6 @@ export const syncOfficialChannels = (db: Db): void => {
   }
 
   if (changed.length > 0) {
-    console.log(`[ray] 官方渠道已校正：${changed.join('、')}`)
+    console.log(`[zhds] 官方渠道已校正：${changed.join('、')}`)
   }
 }

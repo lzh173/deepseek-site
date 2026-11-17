@@ -29,7 +29,7 @@ const keywords = (): string[] => {
   if (!announced) {
     announced = true
     if (cachedKeywords.length === 0) {
-      console.info('[ray] 未配置 RAY_MODERATION_KEYWORDS，内容审核为透传模式')
+      console.info('[zhds] 未配置 RAY_MODERATION_KEYWORDS，内容审核为透传模式')
     }
   }
   return cachedKeywords

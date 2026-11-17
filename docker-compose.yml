@@ -7,14 +7,14 @@
 # 外网入口建议由 Cloudflare Tunnel / Cloudflare Access 承接，
 # 因此这里只把端口绑到 127.0.0.1，不直接暴露到公网。
 
-name: ray
+name: zh-deepseek
 
 services:
   ray:
     build:
       context: .
       dockerfile: server/Dockerfile
-    image: ray-bff:latest
+    image: zh-deepseek-bff:latest
     restart: unless-stopped
     ports:
       - "127.0.0.1:3000:3000"
