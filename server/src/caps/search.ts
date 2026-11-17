@@ -21,6 +21,10 @@ export type SearchHit = {
   snippet: string
   siteName: string | null
   pageAge: string | null
+  /** 官方搜索返回的长摘要（600~800 字），喂给模型比 snippet 更有用 */
+  summary?: string
+  /** 官方搜索的重排分数（0~3），本地源没有这个字段 */
+  rerankScore?: number
 }
 
 /** 一次搜索的总预算：超过就按「没有结果」处理（§9 #4 要求 8 秒内给答复） */
@@ -41,6 +45,12 @@ const ENOUGH_HITS = 2
 const MAX_BODY_BYTES = 1_000_000
 /** 前端来源面板最多展示的条数 */
 const MAX_HITS = 6
+/**
+ * 每个源最多解析多少条再去排序。
+ * 必须比 MAX_HITS 大：相关性排序是在解析之后做的，如果先截断到 6 条，
+ * 真正相关的那条（实测「战争雷霆」排在第 9）会在排序前就被丢掉。
+ */
+const MAX_PARSE_HITS = 20
 /** 单轮最多接受几个查询：本应用只传一个，这里防滥用 */
 const MAX_QUERIES = 4
 /** 摘要最多保留这么多字 */
@@ -508,7 +518,7 @@ const searchSearxng = async (query: string, signal: AbortSignal): Promise<Search
         published === '' ? null : toPageAge(published)
       )
     )
-    if (hits.length >= MAX_HITS) {
+    if (hits.length >= MAX_PARSE_HITS) {
       break
     }
   }
@@ -556,7 +566,7 @@ const parseSo360 = (
     const timeMatched = SO_TIME_RE.exec(block)
     const pageAge = timeMatched ? toPageAge(timeMatched[1] ?? '') : null
     items.push({ title: plainText(anchor[2] ?? ''), url, snippet, pageAge })
-    if (items.length >= MAX_HITS) {
+    if (items.length >= MAX_PARSE_HITS) {
       break
     }
   }
@@ -910,7 +920,7 @@ const parseBing = (html: string): SearchHit[] => {
     }
     const snippetMatch = /<p\b[^>]*>([\s\S]*?)<\/p\s*>/iu.exec(block)
     hits.push(makeHit(titleMatch[2] ?? '', url, snippetMatch?.[1] ?? '', null))
-    if (hits.length >= MAX_HITS) {
+    if (hits.length >= MAX_PARSE_HITS) {
       break
     }
   }
@@ -957,7 +967,7 @@ const parseBingRss = (xml: string): SearchHit[] => {
         toPageAge(xmlTextOf(item, 'pubDate'))
       )
     )
-    if (hits.length >= MAX_HITS) {
+    if (hits.length >= MAX_PARSE_HITS) {
       break
     }
   }
@@ -1153,63 +1163,132 @@ const queryTerms = (query: string): { grams: string[]; chars: string[] } => {
   return { grams: [...grams], chars: [...chars] }
 }
 
+/** 归一化：去掉空白与标点，「IC-7300」与「icom 7300」才可能互相匹配 */
+const compact = (text: string): string => text.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, '')
+
 /**
- * 按相关性排序并过滤明显无关的结果。
+ * 按相关性过滤 + 排序。
  *
- * 搜索引擎的中文长尾质量很不稳定：查「战雷 最新版本」，Bing 会把「战」字的字典页排在前面。
- * 只用 2-gram 命中判断会误伤（「战争雷霆」并不包含子串「战雷」），所以叠加一层
- * **查询字符覆盖率**：标题里出现了几个不同查询字，就加多少分。
- * 若所有结果都不得分（查询词很生僻），保持原顺序返回，不做清洗。
+ * 搜索引擎对生僻词经常返回「看起来有结果、其实全是噪音」的页面
+ * （实测查 icom7300 会回一堆 VPN、垃圾站）。来源面板宁缺毋滥。
+ *
+ * 判定用的是**首个关键词**而不是整句，因为用户最先写的往往就是核心实体：
+ * - 拉丁/数字词（icom7300、IC-7300）：去掉符号后必须作为整体出现，避免「ic」撞上 IC 交易网
+ * - 中文词（战雷）：要求这几个字都出现（「战争雷霆」包含「战」「雷」，算命中）
+ * 全都不命中就返回空，让上层走「没搜到」分支，而不是把垃圾当来源塞给模型。
+ */
+/**
+ * 判定一条结果是否与查询相关。
+ *
+ * 规则刻意做得宽松但方向明确：**只要求主关键词命中**，其余词只加分不淘汰。
+ * 中文没有分词器，纯子串比对会误杀（「战雷」并不出现在「战争雷霆」里），
+ * 所以中文按「字符覆盖率 ≥ 60%」判定，并先去掉「的/是/有/什么」这类虚词；
+ * 拉丁词按字母段 + 数字段逐段命中（「icom7300」要能对上「ICOM IC-7300」）。
+ */
+const FILLER = /[的是有了吗呢吧啊呀么什怎哪我你他她它和与及]/gu
+
+const cjkChars = (word: string): string[] => [...new Set([...word.replace(FILLER, '')])]
+
+const matchesWord = (both: string, word: string): boolean => {
+  if (/[\u4e00-\u9fff]/u.test(word)) {
+    const chars = cjkChars(word)
+    if (chars.length === 0) {
+      return true
+    }
+    const covered = chars.filter((char) => both.includes(char)).length
+    return covered / chars.length >= 0.6
+  }
+  const runs = (compact(word).match(/[a-z]+|\d+/gu) ?? []).filter((run) => run.length >= 2)
+  if (runs.length === 0) {
+    return true
+  }
+  return runs.every((run) => both.includes(run))
+}
+
+/**
+ * 相关性打分 + 过滤。
+ *
+ * 设计原则（踩过两次坑之后定下来的）：
+ * - **纯中文查询只排序、不过滤**。中文没有分词器，标题里是否出现查询的每个字很随机，
+ *   硬过滤会把「战争雷霆」（标题里没有「战雷」二字）这种正确结果丢掉。
+ * - **含拉丁词或数字时才过滤**（如 icom7300）。这类查询的噪音特征很明显
+ *   （整页都是无关站点），而正确结果里几乎必然出现这串字母/数字。
+ * - 排序永远做，保证相关结果排在最前面——来源面板只看前几条。
  */
 const rankHits = (query: string, hits: SearchHit[]): SearchHit[] => {
-  const { grams, chars } = queryTerms(query)
-  if (hits.length <= 1 || (grams.length === 0 && chars.length === 0)) {
+  if (hits.length === 0) {
     return hits
   }
+  const words = query.split(/\s+/u).filter((word) => word.length > 0)
+  const distinctive = words.filter((word) => /[a-z0-9]/iu.test(compact(word)) && compact(word).length >= 3)
+  const strict = distinctive.length > 0
+
   const scored = hits.map((hit, index) => {
-    const title = hit.title.toLowerCase()
-    const snippet = hit.snippet.toLowerCase()
-    const both = `${title}\n${snippet}`
+    const both = `${compact(hit.title)}\n${compact(hit.snippet)}`
     let score = 0
-    for (const gram of grams) {
-      const key = gram.toLowerCase()
-      if (title.includes(key)) {
-        score += 3
-      } else if (snippet.includes(key)) {
-        score += 1
+    for (const word of words) {
+      const key = compact(word)
+      if (key.length === 0) {
+        continue
       }
-    }
-    if (chars.length > 0) {
-      let covered = 0
-      for (const char of chars) {
-        if (both.includes(char.toLowerCase())) {
-          covered += 1
+      if (/[\u4e00-\u9fff]/u.test(word)) {
+        // 中文：按字符覆盖率给分（0~1），只影响排序不影响去留
+        const chars = [...new Set([...word.replace(FILLER, '')])]
+        if (chars.length > 0) {
+          const covered = chars.filter((char) => both.includes(char)).length
+          score += covered / chars.length
         }
+      } else if (both.includes(key)) {
+        score += key.length >= 4 ? 3 : 1
       }
-      // 覆盖率最多加 4 分，保证它只用于「同分时区分明显更相关的那条」
-      score += (covered / chars.length) * 4
     }
     return { hit, score, index }
   })
-  if (!scored.some((item) => item.score > 0)) {
-    return hits
+
+  const kept = strict ? scored.filter((item) => item.score > 0) : scored
+  if (kept.length === 0) {
+    return []
   }
-  return scored
-    .filter((item) => item.score > 0)
-    .sort((a, b) => b.score - a.score || a.index - b.index)
-    .map((item) => item.hit)
+  return kept.sort((a, b) => b.score - a.score || a.index - b.index).map((item) => item.hit)
 }
 
 /**
  * 查询归一化：用户常写「搜索 xxx」「帮我查一下 xxx」，这些动词进搜索引擎会污染结果
  * （实测「搜索 warthunder」返回的是搜狗首页和导航站）。这里只剥掉开头的指令词。
  */
-const normalizeQuery = (raw: string): string => {
-  const trimmed = raw.replace(/\s+/gu, ' ').trim()
-  const stripped = trimmed
-    .replace(/^(?:请|帮忙|帮我|麻烦)?\s*(?:联网)?(?:搜索|搜一下|搜下|搜|查询|查一下|查下|查找|百度)\s*(?:一下)?\s*[:：,，]?\s*/u, '')
-    .trim()
-  return stripped.length > 0 ? stripped : trimmed
+/**
+ * 查询归一化：把自然语言指令还原成真正的搜索词。
+ *
+ * 用户会写「请你搜索icom7300」「帮我查一下 xx 的最新价格」，直接把这些话丢给搜索引擎，
+ * 中文分词会把「请」「你」当成关键词——截图里就是因为这个，「icom7300」的搜索
+ * 变成了一堆「请」字释义页。这里按顺序做四件事：
+ *   1. 去掉末尾的语气词与标点
+ *   2. 去掉开头的客套/指令前缀（请你、帮我、麻烦你……）
+ *   3. 去掉紧跟其后的检索动词（搜索、查一下、百度一下……）
+ *   4. 再去一次前缀（「请帮我搜索」这种叠加写法）
+ * 剥完为空就退回原句，避免把「搜索」本身当成查询词时丢掉全部输入。
+ */
+export const normalizeQuery = (raw: string): string => {
+  let text = raw.replace(/\s+/gu, ' ').trim()
+
+  // 1) 去掉句末标点与语气词
+  text = text.replace(/[。！？!?~～…]+$/u, '').replace(/[，,、\s]+$/u, '').trim()
+
+  const courtesy = /^(?:请|麻烦|劳驾)?\s*(?:你|您|帮我|帮忙|帮忙给|给我)?\s*/u
+  const verb =
+    /^(?:联网|上网|在线|帮我)?\s*(?:搜索一下|搜索|搜一下|搜下|搜|查一下|查一查|查询|查下|查找|找一下|找|百度一下|百度|谷歌一下|谷歌)\s*(?:一下)?\s*[:：,，]?\s*/u
+
+  for (let round = 0; round < 2; round += 1) {
+    const before = text
+    text = text.replace(courtesy, '').trim()
+    text = text.replace(verb, '').trim()
+    if (text === before) {
+      break
+    }
+  }
+
+  // 4) 只剩动词（例如用户真的就想搜「搜索」两个字）：退回原句
+  return text.length > 0 ? text : raw.trim()
 }
 
 /**
@@ -1251,8 +1330,16 @@ const cacheSet = (key: string, hits: SearchHit[]): void => {
 /**
  * 联网搜索：多个 query 依次查询、按 url 去重，最多 6 条。
  * 任何失败（未配置、超时、HTTP 错误、解析失败）都返回 []，绝不抛错。
+ *
+ * `official` 是官方 Search API 的执行器（见 caps/official-search.ts）。
+ * 传入后就优先走官方：它的结果经过重排、带长摘要，质量远好于抓 HTML；
+ * 官方返回空或失败时自动落回本地链路，保证功能永远可用。
  */
-export const searchWeb = async (queries: string[], signal?: AbortSignal): Promise<SearchHit[]> => {
+export const searchWeb = async (
+  queries: string[],
+  signal?: AbortSignal,
+  official?: (query: string, originalQuestion?: string) => Promise<SearchHit[]>
+): Promise<SearchHit[]> => {
   const list: string[] = []
   for (const raw of queries) {
     const query = normalizeQuery(raw)
@@ -1265,6 +1352,31 @@ export const searchWeb = async (queries: string[], signal?: AbortSignal): Promis
   }
   if (list.length === 0) {
     return []
+  }
+
+  // 官方搜索优先：一次请求就能拿到多条重排结果，直接返回
+  if (official) {
+    const officialHits: SearchHit[] = []
+    const seenOfficial = new Set<string>()
+    for (const query of list) {
+      const found = await attempt('official', () => official(query, queries[0]))
+      for (const hit of found) {
+        if (seenOfficial.has(hit.url)) {
+          continue
+        }
+        seenOfficial.add(hit.url)
+        officialHits.push(hit)
+        if (officialHits.length >= MAX_HITS) {
+          return officialHits
+        }
+      }
+      if (officialHits.length > 0) {
+        return officialHits
+      }
+    }
+    if (signal?.aborted) {
+      return []
+    }
   }
 
   const controller = new AbortController()

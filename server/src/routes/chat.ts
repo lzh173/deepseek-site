@@ -13,6 +13,8 @@ import type { FastifyBaseLogger, FastifyInstance, FastifyReply } from 'fastify'
 import { z } from 'zod'
 import { extractDocument } from '../caps/documents.ts'
 import { readUrl, type ReadResult } from '../caps/reader.ts'
+import { planSearchQueries } from '../caps/query.ts'
+import { hasOfficialSearch, officialFetch, officialSearch } from '../caps/official-search.ts'
 import { searchWeb, type SearchHit } from '../caps/search.ts'
 import type { FileRow } from '../db/types.ts'
 import { moderateText } from '../caps/moderation.ts'
@@ -434,6 +436,7 @@ const createFileResolver = (
 /** 查询文本上限：搜索词太长对召回没有帮助，只会浪费上游 token */
 const MAX_QUERY_CHARS = 200
 /** 注入 system 的每条摘要上限 */
+const MAX_SUMMARY_CHARS = 800
 const MAX_SNIPPET_CHARS = 200
 /** 注入 system 的每篇正文上限 */
 const MAX_READ_CHARS = 8_000
@@ -490,8 +493,20 @@ const extractLinks = (text: string): string[] => {
 
 const formatSearchNote = (hits: SearchHit[]): string => {
   const lines = hits.map((hit, index) => {
-    const snippet = hit.snippet === '' ? '' : `\n   摘要：${hit.snippet.slice(0, MAX_SNIPPET_CHARS)}`
-    return `[${index + 1}] ${hit.title}\n   URL：${hit.url}${snippet}`
+    // 官方搜索带长摘要（600~800 字），信息量远大于 snippet；
+    // 本地源没有 summary，退回 snippet。
+    const body = (hit.summary && hit.summary.length > 0 ? hit.summary : hit.snippet).slice(
+      0,
+      MAX_SUMMARY_CHARS
+    )
+    const meta = [
+      hit.siteName === null ? '' : `站点：${hit.siteName}`,
+      hit.pageAge === null ? '' : `时间：${hit.pageAge}`,
+    ]
+      .filter((item) => item !== '')
+      .join('，')
+    const head = meta === '' ? '' : `\n   ${meta}`
+    return `[${index + 1}] ${hit.title}\n   URL：${hit.url}${head}${body === '' ? '' : `\n   摘要：${body}`}`
   })
   return `${SEARCH_NOTE_HEADER}\n${lines.join('\n')}`
 }
@@ -509,23 +524,39 @@ const formatReadNote = (results: ReadResult[]): string => {
  * 有结果时把结果列表注入 system，没有结果时结果块只含一个 error 项，对话照常继续（§9 铁律 3）。
  */
 const prepareSearch = async (
+  app: FastifyInstance,
   ray: string,
-  rawQuery: string,
+  queries: string[],
   signal: AbortSignal,
   log: FastifyBaseLogger
 ): Promise<{ blocks: ToolBlock[]; note: string | null }> => {
-  const query = rawQuery.trim().slice(0, MAX_QUERY_CHARS)
-  if (query === '') {
+  const cleaned = queries.map((item) => item.trim()).filter((item) => item.length > 0)
+  if (cleaned.length === 0) {
     // 只发了附件之类：没有可检索的文本，不发工具块
     log.debug({ ray }, '联网搜索已开启，但最后一条用户消息没有文本')
     return { blocks: [], note: null }
   }
 
-  const toolUse = searchToolUse(ray, [query])
-  const hits = await searchWeb([query], signal)
+  const toolUse = searchToolUse(ray, cleaned)
+  // 有官方 Key 就走官方 Search API（重排 + 长摘要），没有就落回本地抓取
+  const official = hasOfficialSearch(app)
+    ? (query: string, original?: string) =>
+        officialSearch(app, query, { originalQuestion: original, signal, count: 8 }).then((rows) =>
+          rows.map((row) => ({
+            title: row.title,
+            url: row.url,
+            snippet: row.snippet,
+            summary: row.summary,
+            siteName: row.siteName,
+            pageAge: row.pageAge,
+            rerankScore: row.rerankScore,
+          }))
+        )
+    : undefined
+  const hits = await searchWeb(cleaned, signal, official)
   if (hits.length === 0) {
     // 失败路径同样先发调用块：tool_use_id 才不会悬空，前端也能把这次检索标成失败
-    log.info({ ray, query }, '联网搜索没有可用结果，本轮退化为普通对话')
+    log.info({ ray, queries: cleaned }, '联网搜索没有可用结果，本轮退化为普通对话')
     return { blocks: [toolUse, searchToolResultError(toolUse.id)], note: null }
   }
 
@@ -537,6 +568,7 @@ const prepareSearch = async (
 
 /** 读链接：成功的链接各发一对「调用块 + 结果块」，正文注入 system；失败的只记日志 */
 const prepareRead = async (
+  app: FastifyInstance,
   ray: string,
   links: string[],
   signal: AbortSignal,
@@ -549,6 +581,14 @@ const prepareRead = async (
   const fetched = await Promise.all(
     links.map(async (link) => {
       try {
+        // 官方 Fetch 返回干净的 Markdown，比本地去标签抽取质量高；失败再退回本地
+        const viaOfficial = await officialFetch(app, link, signal)
+        if (viaOfficial) {
+          return {
+            link,
+            result: { url: link, title: viaOfficial.title, text: viaOfficial.content, publishedAt: null },
+          }
+        }
         return { link, result: await readUrl(link, signal) }
       } catch (error) {
         // 单个链接失败不能拖垮对话：只记日志，跳过这一条
@@ -582,11 +622,14 @@ const prepareRead = async (
  * 任何失败都只降级成普通对话，绝不把异常抛给路由层。
  */
 const prepareTools = async (input: {
+  app: FastifyInstance
   ray: string
   tools: ToolParam[] | undefined
   messages: MessageParam[]
   signal: AbortSignal
   log: FastifyBaseLogger
+  /** 只有开启搜索时才用得到：让模型先把搜索词想出来 */
+  planQueries?: (() => Promise<string[]>) | undefined
 }): Promise<PreparedTools> => {
   const wantSearch = declaredTool(input.tools, 'deepseek_web_search')
   const wantRead = declaredTool(input.tools, 'deepseek_read_url')
@@ -596,10 +639,18 @@ const prepareTools = async (input: {
 
   const text = lastUserText(input.messages)
   try {
+    // 搜索词交给模型生成（GOAL 的「两次请求」做法）：
+    // 直接拿用户原句去搜会把「请你」「搜索」当关键词，中文分词下几乎必然跑偏。
+    const queries = wantSearch
+      ? await (input.planQueries?.() ?? Promise.resolve([text.slice(0, MAX_QUERY_CHARS)]))
+      : []
+
     const [search, read] = await Promise.all([
-      wantSearch ? prepareSearch(input.ray, text, input.signal, input.log) : Promise.resolve(null),
+      wantSearch
+          ? prepareSearch(input.app, input.ray, queries, input.signal, input.log)
+          : Promise.resolve(null),
       wantRead
-        ? prepareRead(input.ray, extractLinks(text), input.signal, input.log)
+        ? prepareRead(input.app, input.ray, extractLinks(text), input.signal, input.log)
         : Promise.resolve(null),
     ])
 
@@ -986,11 +1037,22 @@ export const chatRoutes = async (app: FastifyInstance): Promise<void> => {
     // 联网工具必须在发起上游请求之前跑完：检索/正文要注入 system，
     // 工具块也要排在第一个文本块之前（GOAL.md §9 #4 / #5）
     const prepared = await prepareTools({
+      app,
       ray,
       tools: body.tools,
       messages: body.messages,
       signal: client.signal,
       log: request.log,
+      planQueries: () =>
+        planSearchQueries({
+          app,
+          user,
+          publicModel: body.model,
+          userText: lastUserText(body.messages),
+          ray,
+          signal: client.signal,
+          log: request.log,
+        }),
     })
     const messages = withSystemNotes(baseMessages, prepared.notes)
     const toolEvents = toToolBlockEvents(prepared.blocks)
