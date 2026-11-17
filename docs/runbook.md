@@ -209,9 +209,19 @@ docker compose --env-file server/.env up -d --build
 
 ## 5.1 联网搜索
 
-- `docker compose` 已内置 `searxng` 服务，`RAY_SEARXNG_URL` 默认指向它。
-- 本地不需要搜索时可以不配，BFF 会退化为 DuckDuckGo 抓取；都失败也不会影响对话。
-- 搜索结果会先以「来源卡片」形式出现在回答前，再作为上下文注入模型。
+兜底链路（按顺序，任一环节拿到结果就停）：
+
+```
+SearXNG（RAY_SEARXNG_URL，可选）
+  → 360 / 百度 并行竞速（各 4 秒闸门）
+  → Bing RSS（format=rss，最稳）
+  → Bing HTML → DuckDuckGo（保底）
+```
+
+- **不装 SearXNG 也能用**：默认走 360/百度/Bing，实测中文查询约 1 秒返回 5~6 条。
+- 百度在连续请求后会返回「安全验证」页、360 会限流，此时自动落到 Bing RSS（结果会变差但不会失败）。
+- 整体预算 8 秒；全部源失败也只是「没有检索结果」，对话照常继续。
+- 想要稳定质量，仍建议单独跑一个 SearXNG，把 `RAY_SEARXNG_URL` 指过去（非 Docker 装法见下）。
 
 ## 6. 数据与备份
 
