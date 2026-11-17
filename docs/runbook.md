@@ -194,6 +194,16 @@ docker compose --env-file server/.env up -d --build
 **配一个新上游的最小步骤**：渠道 → 账号池传 Key → 模型 → 在该 Key 上「编辑映射」
 （public_model ↔ upstream_model）→ 普通用户还需在「用户」页授以「模型 × Key」。
 
+### 官方渠道（只需贴 Key）
+
+渠道页新建时把类型选成 **DeepSeek 官方**，只填名称即可：服务端会固定
+`base_url = https://api.deepseek.com/v1`、`tier = paid`，并自动建好两个模型
+（`deepseek-chat`、`deepseek-reasoner`）。
+
+接着到「账号池」选中该渠道，把官方 API Key 粘进去——**Key 会自动映射到这两个模型**，
+不用再手工配映射。因为 `tier = paid`，默认只有管理员能用；要给普通用户，去「用户」页
+按「模型 × Key」授权。
+
 想让图片能进模型：给模型勾上 `vision` 能力位，并把支持图片的上游模型映射到一把 Key。
 前端检测到当前模型 `vision=false` 且有图片附件时，会在输入框上方出现降级提示条。
 

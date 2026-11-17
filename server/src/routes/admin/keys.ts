@@ -1,6 +1,7 @@
 import type { FastifyInstance } from 'fastify'
 import { z } from 'zod'
 import type { ChannelRow, KeyModelRow, KeyRow, KeyStatus } from '../../db/types.ts'
+import { mapOfficialModelsToKey } from '../../db/official.ts'
 import { decryptSecret, encryptSecret, maskSecret, randomId } from '../../lib/crypto.ts'
 import { badRequest, notFound } from '../../lib/errors.ts'
 import { nowIso, todayUtc } from '../../lib/time.ts'
@@ -227,6 +228,10 @@ export const keyRoutes = async (app: FastifyInstance): Promise<void> => {
           body.daily_quota,
           createdAt
         )
+        // 官方渠道：贴上来就自动映射到 two 个官方模型，免去手工配映射
+        if (channel.official === 1) {
+          mapOfficialModelsToKey(app.db, id)
+        }
         ids.push(id)
       }
     })()

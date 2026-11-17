@@ -2,6 +2,7 @@ import type { FastifyInstance } from 'fastify'
 import { request } from 'undici'
 import { z } from 'zod'
 import type { ChannelRow } from '../../db/types.ts'
+import { ensureOfficialModels, OFFICIAL_BASE_URL } from '../../db/official.ts'
 import { decryptSecret, randomId } from '../../lib/crypto.ts'
 import { badRequest, notFound } from '../../lib/errors.ts'
 import { nowIso } from '../../lib/time.ts'
@@ -76,13 +77,16 @@ const BaseUrl = z
 
 const CreateBody = z.object({
   name: z.string().trim().min(1).max(64),
-  kind: z.enum(['openai', 'anthropic', 'gemini', 'ollama']),
-  base_url: BaseUrl,
-  tier: z.enum(['paid', 'free']),
+  kind: z.enum(['openai', 'anthropic', 'gemini', 'ollama']).default('openai'),
+  /** 官方渠道不需要填 base_url，服务端会固定成 DeepSeek 官方地址 */
+  base_url: BaseUrl.optional(),
+  tier: z.enum(['paid', 'free']).default('paid'),
   priority: z.coerce.number().int().min(0).max(10_000).default(100),
   timeout_ms: z.coerce.number().int().min(1_000).max(600_000).default(120_000),
   concurrency: z.coerce.number().int().min(1).max(64).default(4),
   enabled: z.boolean().default(true),
+  /** true = DeepSeek 官方渠道：只填 API Key 即可用 */
+  official: z.boolean().default(false),
 })
 
 /** PATCH 的字段全部可选；不传即不修改。 */
@@ -119,6 +123,7 @@ export const channelRoutes = async (app: FastifyInstance): Promise<void> => {
     timeout_ms: row.timeout_ms,
     concurrency: row.concurrency,
     enabled: row.enabled === 1,
+    official: row.official === 1,
     created_at: row.created_at,
     key_count: row.key_count ?? 0,
   })
@@ -143,26 +148,38 @@ export const channelRoutes = async (app: FastifyInstance): Promise<void> => {
     const body = parsed.data
     const id = randomId('chn')
 
+    // 官方渠道：kind/base_url/tier 全部由服务端固定，用户只填名字与 Key
+    const official = body.official
+    const kind = official ? 'openai' : body.kind
+    const baseUrl = official ? OFFICIAL_BASE_URL : (body.base_url ?? '')
+    if (!official && baseUrl === '') {
+      throw badRequest('base_url 不能为空')
+    }
+
     app.db
       .prepare(
-        `INSERT INTO channels (id, name, kind, base_url, tier, priority, timeout_ms, concurrency, enabled, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        `INSERT INTO channels (id, name, kind, base_url, tier, priority, timeout_ms, concurrency, enabled, official, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       )
       .run(
         id,
         body.name,
-        body.kind,
+        kind,
         // 末尾斜杠统一去掉，探活与上游调用都靠拼 path，避免出现 //
-        body.base_url.replace(/\/+$/, ''),
-        body.tier,
+        baseUrl.replace(/\/+$/, ''),
+        official ? 'paid' : body.tier,
         body.priority,
         body.timeout_ms,
         body.concurrency,
         body.enabled ? 1 : 0,
+        official ? 1 : 0,
         nowIso()
       )
 
-    return { ray: request.ray, item: toPayload(findChannel(id)) }
+    // 官方渠道建好就把两个官方模型补齐，管理员接下来只需要贴 Key
+    const createdModels = official ? ensureOfficialModels(app.db) : []
+
+    return { ray: request.ray, item: toPayload(findChannel(id)), created_models: createdModels }
   })
 
   app.patch<{ Params: { id: string } }>('/channels/:id', async (request) => {

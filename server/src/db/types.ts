@@ -33,6 +33,8 @@ export type ChannelRow = {
   timeout_ms: number
   concurrency: number
   enabled: number
+  /** 1 = DeepSeek 官方渠道（kind 固定 openai，base_url 固定官方地址） */
+  official: number
   created_at: string
 }
 

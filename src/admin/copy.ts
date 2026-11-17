@@ -153,7 +153,10 @@ export const copy = {
       anthropic: 'Anthropic 兼容',
       gemini: 'Gemini',
       ollama: 'Ollama',
+      official: 'DeepSeek 官方',
     },
+    officialHint:
+      '官方渠道固定使用 https://api.deepseek.com/v1，付费层级，仅管理员可用。创建后到「账号池」直接粘贴 API Key，两个官方模型会自动就绪。',
     test: '测试',
     testing: '测试中…',
     probeOk: (latency: number, status: number) => `${latency} ms · HTTP ${status}`,

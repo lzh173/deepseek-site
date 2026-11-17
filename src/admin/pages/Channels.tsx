@@ -10,7 +10,7 @@ import {
   errorMessage,
   type Channel,
   type ChannelInput,
-  type ChannelKind,
+  type ChannelKindUi,
   type ProbeResult,
   type Tier,
 } from '../api.js'
@@ -27,7 +27,7 @@ import styles from './Channels.module.css'
 
 type Draft = {
   name: string
-  kind: ChannelKind
+  kind: ChannelKindUi
   base_url: string
   tier: Tier
   priority: string
@@ -39,7 +39,8 @@ type Draft = {
 
 type DraftErrors = Partial<Record<keyof Draft, string>>
 
-const kindOptions: { value: ChannelKind; label: string }[] = [
+const kindOptions: { value: ChannelKindUi; label: string }[] = [
+  { value: 'official', label: copy.channels.kindLabels.official },
   { value: 'openai', label: copy.channels.kindLabels.openai },
   { value: 'anthropic', label: copy.channels.kindLabels.anthropic },
   { value: 'gemini', label: copy.channels.kindLabels.gemini },
@@ -64,7 +65,7 @@ const emptyDraft = (): Draft => ({
 
 const draftOf = (channel: Channel): Draft => ({
   name: channel.name,
-  kind: channel.kind,
+  kind: channel.official ? 'official' : channel.kind,
   base_url: channel.base_url,
   tier: channel.tier,
   priority: String(channel.priority),
@@ -83,7 +84,7 @@ const validate = (draft: Draft): DraftErrors => {
   if (!draft.name.trim()) {
     errors.name = copy.common.validation.required
   }
-  if (!/^https?:\/\/\S+$/i.test(draft.base_url.trim())) {
+  if (draft.kind !== 'official' && !/^https?:\/\/\S+$/i.test(draft.base_url.trim())) {
     errors.base_url = copy.common.validation.url
   }
   if (!isInteger(draft.priority, 0)) {
@@ -186,7 +187,9 @@ export const Channels = () => {
       render: (row) => (
         <div className={styles.nameCell}>
           <span className={ui.ellipsis}>{row.name}</span>
-          <Tag tone="neutral">{copy.channels.kindLabels[row.kind]}</Tag>
+          <Tag tone={row.official ? 'brand' : 'neutral'}>
+            {row.official ? copy.channels.kindLabels.official : copy.channels.kindLabels[row.kind]}
+          </Tag>
         </div>
       ),
     },
@@ -365,11 +368,13 @@ const ChannelForm = ({
     if (Object.keys(nextErrors).length > 0) {
       return
     }
+    const isOfficial = draft.kind === 'official'
     const payload: ChannelInput = {
       name: draft.name.trim(),
-      kind: draft.kind,
-      base_url: draft.base_url.trim().replace(/\/+$/, ''),
-      tier: draft.tier,
+      kind: draft.kind === 'official' ? 'openai' : draft.kind,
+      official: isOfficial,
+      base_url: isOfficial ? '' : draft.base_url.trim().replace(/\/+$/, ''),
+      tier: isOfficial ? 'paid' : draft.tier,
       priority: Number(draft.priority.trim()),
       timeout_ms: Number(draft.timeout.trim()) * 1000,
       concurrency: Number(draft.concurrency.trim()),
@@ -431,22 +436,30 @@ const ChannelForm = ({
             onChange={(value) => update('kind', value)}
           />
         </Field>
-        <Field label={copy.channels.tier}>
-          <Select
-            ariaLabel={copy.channels.tier}
-            value={draft.tier}
-            options={tierOptions}
-            onChange={(value) => update('tier', value)}
-          />
-        </Field>
-        <Field label={copy.channels.baseUrl} error={errors.base_url} wide>
-          <Input
-            value={draft.base_url}
-            placeholder="https://api.example.com/v1"
-            spellCheck={false}
-            onChange={(event) => update('base_url', event.currentTarget.value)}
-          />
-        </Field>
+        {draft.kind === 'official' ? (
+          <Field label={copy.channels.baseUrl} wide>
+            <span className={ui.muted}>{copy.channels.officialHint}</span>
+          </Field>
+        ) : (
+          <>
+            <Field label={copy.channels.tier}>
+              <Select
+                ariaLabel={copy.channels.tier}
+                value={draft.tier}
+                options={tierOptions}
+                onChange={(value) => update('tier', value)}
+              />
+            </Field>
+            <Field label={copy.channels.baseUrl} error={errors.base_url} wide>
+              <Input
+                value={draft.base_url}
+                placeholder="https://api.example.com/v1"
+                spellCheck={false}
+                onChange={(event) => update('base_url', event.currentTarget.value)}
+              />
+            </Field>
+          </>
+        )}
         <Field
           label={copy.channels.priority}
           hint={copy.channels.priorityHint}

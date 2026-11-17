@@ -38,6 +38,8 @@ export const errorMessage = (error: unknown): string => {
 }
 
 export type ChannelKind = 'openai' | 'anthropic' | 'gemini' | 'ollama'
+/** 界面专用：官方 DeepSeek 渠道（提交时转成 kind=openai + official=true） */
+export type ChannelKindUi = ChannelKind | 'official'
 export type Tier = 'paid' | 'free'
 export type KeyStatus = 'active' | 'cooling' | 'disabled'
 export type Role = 'admin' | 'user'
@@ -70,6 +72,7 @@ export type Channel = {
   timeout_ms: number
   concurrency: number
   enabled: boolean
+  official: boolean
   created_at: string
   key_count: number
 }
@@ -77,6 +80,8 @@ export type Channel = {
 export type ChannelInput = {
   name: string
   kind: ChannelKind
+  /** true = DeepSeek 官方渠道（服务端固定 base_url 与 tier） */
+  official?: boolean
   base_url: string
   tier: Tier
   priority: number
