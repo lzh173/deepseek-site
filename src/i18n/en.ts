@@ -13,7 +13,7 @@ export const en = {
   sessionSaveFailed:    'Chats or attachments have not been saved to the server. Retry before closing this page.',
   sessionDeleteFailed: 'Unable to delete this chat. Please try again.',
   settings: 'Settings',
-  appName: 'API usage demo',
+  appName: 'ZH DeepSeek',
   deleteSessionModalContentTitle: 'Delete chat?',
   deleteSessionWithFilesDescription:    'This chat and its uploaded files will be permanently deleted and cannot be recovered. Delete this chat?',
   cancel: 'Cancel',

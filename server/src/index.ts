@@ -103,7 +103,16 @@ export const buildApp = async (): Promise<FastifyInstance> => {
       root: webDir,
       prefix: '/',
       index: ['index.html'],
-      wildcard: false,
+      // 关键：必须允许通配。前端产物带内容哈希（main.f9cfaa78.js），
+      // wildcard: false 会在启动时把文件列表固化下来，
+      // 之后重新 pnpm build 出的新文件名会直接 404，只能重启 BFF 才能恢复。
+      wildcard: true,
+      // 就地重新构建时不要被 304 卡住：文件 mtime 变了才走缓存
+      cacheControl: true,
+      maxAge: 0,
+      // ETag 交给浏览器协商缓存；哈希文件名本身已经保证了缓存安全
+      etag: true,
+      lastModified: true,
     })
     app.log.info(`[zhds] serving static site from ${webDir}`)
   }
