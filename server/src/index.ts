@@ -8,6 +8,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { openDb } from './db/index.ts'
 import { seedAdmin, seedUpstream } from './db/seed.ts'
+import { syncOfficialChannels } from './db/official.ts'
 import { env } from './env.ts'
 import { startJobs } from './jobs/index.ts'
 import { authPlugin } from './plugins/auth.ts'
@@ -28,6 +29,7 @@ export const buildApp = async (): Promise<FastifyInstance> => {
   const db = openDb()
   await seedAdmin(db)
   seedUpstream(db)
+  syncOfficialChannels(db)
 
   const app = Fastify({
     logger: { level: env.RAY_LOG_LEVEL },

@@ -36,6 +36,8 @@ const EnvSchema = z.object({
    * 超时即认为当前 Key 不可用，会换下一把重试。
    */
   RAY_FIRST_TOKEN_TIMEOUT_MS: z.coerce.number().int().min(1000).max(300_000).default(15_000),
+  /** DeepSeek 官方渠道的 BASE URL；OpenAI 兼容接口不带 /v1，默认即可 */
+  RAY_OFFICIAL_BASE_URL: z.string().url().optional(),
 })
 
 export type Env = z.infer<typeof EnvSchema> & {

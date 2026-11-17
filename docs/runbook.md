@@ -197,8 +197,8 @@ docker compose --env-file server/.env up -d --build
 ### 官方渠道（只需贴 Key）
 
 渠道页新建时把类型选成 **DeepSeek 官方**，只填名称即可：服务端会固定
-`base_url = https://api.deepseek.com/v1`、`tier = paid`，并自动建好两个模型
-（`deepseek-chat`、`deepseek-reasoner`）。
+`base_url = https://api.deepseek.com`（注意：OpenAI 兼容接口**不带 /v1**）、`tier = paid`，
+并自动建好两个模型：**`deepseek-flash`**（支持图像理解）与 **`deepseek-v4-pro`**（不支持图像）。
 
 接着到「账号池」选中该渠道，把官方 API Key 粘进去——**Key 会自动映射到这两个模型**，
 不用再手工配映射。因为 `tier = paid`，默认只有管理员能用；要给普通用户，去「用户」页
