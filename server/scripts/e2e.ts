@@ -763,6 +763,24 @@ const main = async (): Promise<void> => {
       assert(typeof caps.official.search === 'boolean', '缺少 official.search')
       assert(caps.browser.speechSynthesis === true, '缺少 browser.speechSynthesis')
     })
+
+    // ---------------- K. 退出登录（浏览器真实发法：无 body、无 Content-Type） ----------------
+    await check('无 body 的 POST 不会被 415 挡住，退出登录可用', async () => {
+      const client = new Client(base)
+      assert((await client.login('admin', adminPassword)) === 200, 'admin 登录失败')
+
+      // 浏览器 fetch 不发 body 时不会带 Content-Type；Fastify 默认对 POST 回 415
+      const response = await client.request('/api/auth/logout', {
+        method: 'POST',
+        headers: { Accept: 'application/json' },
+      })
+      assert(response.status === 200, `logout status=${response.status}`)
+
+      const me = await client.json<{ user: unknown }>('/api/me')
+      assert(me.user === null, '退出后仍处于登录状态')
+
+      assert((await client.login('admin', adminPassword)) === 200, '重新登录失败')
+    })
   } finally {
     cleanup()
   }

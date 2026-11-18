@@ -57,6 +57,28 @@ export const buildApp = async (): Promise<FastifyInstance> => {
     }
   })
 
+  /**
+   * 兜底解析器：浏览器用 fetch 发「没有 body 的 POST」时**不会带 Content-Type**，
+   * 而 Fastify 对 POST 遇到无法识别的 Content-Type 会直接 415。
+   * 退出登录（POST /api/auth/logout，无 body）因此在浏览器里永远失败——
+   * 前端收到 415 抛错，登录态清不掉。
+   *
+   * 这里把「未知类型」统一按文本读出来：空的当 {}，能当 JSON 解析的就解析，
+   * 其余原样丢弃。multipart/form-data 有自己更精确的解析器，不受影响。
+   */
+  app.addContentTypeParser('*', { parseAs: 'string' }, (_req, body, done) => {
+    const text = typeof body === 'string' ? body.trim() : ''
+    if (!text) {
+      done(null, {})
+      return
+    }
+    try {
+      done(null, JSON.parse(text))
+    } catch {
+      done(null, {})
+    }
+  })
+
   await app.register(dbPlugin, { db })
   await app.register(requestIdPlugin)
   await app.register(errorPlugin)
