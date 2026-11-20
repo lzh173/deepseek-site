@@ -1,6 +1,6 @@
 {
   "name": "zh-deepseek-web",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "ZH DeepSeek 聊天站前端：把 chat-demo 的 DeepSeek 直连改造成自建 BFF 驱动。",
   "license": "AGPL-3.0-only",
   "private": true,

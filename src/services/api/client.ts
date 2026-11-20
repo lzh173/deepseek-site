@@ -1,4 +1,5 @@
 import { translate, type TranslationMessage } from '../../i18n/index.js'
+import { resizeUploadImage } from '../../utils/resizeUploadImage.js'
 import { readMessageEvent } from './parseEvent.js'
 import { readServerSentEvents } from './sse.js'
 import type {
@@ -149,7 +150,8 @@ export const uploadFile = async (
   if (purpose) {
     form.append('purpose', purpose)
   }
-  form.append('file', file)
+  // 上游 v0.1.3：图片（purpose === null）上传前先重采样，避免超大原图让请求体过大
+  form.append('file', purpose === null ? await resizeUploadImage(file, signal) : file)
   const response = await request(apiUrl('/files'), {
     method: 'POST',
     body: form,
